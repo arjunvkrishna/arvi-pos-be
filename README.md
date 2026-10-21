@@ -149,6 +149,21 @@ docker run -d \
 
 ---
 
+## Docker Swarm Horizontal Scalability & Traffic Spike Management
+
+The backend is stateless and optimized for horizontal scaling in Docker Swarm mode:
+- **Stateless Replicas**: JWT token authentication with database-backed token rotation (`SELECT ... FOR UPDATE` row locks).
+- **Concurrency Pooling**: Externalized HikariCP pool (`HIKARI_MAX_POOL_SIZE`, `HIKARI_MIN_IDLE`) and Tomcat thread configuration (`TOMCAT_MAX_THREADS`, `TOMCAT_MIN_SPARE_THREADS`).
+- **Flyway Lock Retry**: Multiple replicas starting concurrently wait on migrations gracefully (`lock-retry-count: 60`).
+- **Graceful Shutdown**: 30-second shutdown phase timeout (`server.shutdown: graceful`) prevents dropped transactions during scale-in operations.
+
+```bash
+# Scale backend dynamically during rush hours
+docker service scale arvi_backend=10
+```
+
+---
+
 ## Health & Verification Endpoints
 
 - **Health Check**: `GET /api/health`
