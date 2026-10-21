@@ -236,6 +236,10 @@ public class DatabaseSchemaEnsurer implements ApplicationRunner {
                 "created_at TIMESTAMP NOT NULL DEFAULT NOW(), " +
                 "updated_at TIMESTAMP NOT NULL DEFAULT NOW())");
 
+        // Ensure default row for telegram_settings exists defensively
+        executeSqlSafe("INSERT INTO telegram_settings (id, enabled, daily_send_time, timezone, created_at, updated_at) " +
+                "VALUES (1, false, '09:00', 'Asia/Kolkata', NOW(), NOW()) ON CONFLICT (id) DO NOTHING");
+
         log.info("Database schema verification and self-healing completed successfully.");
     }
 

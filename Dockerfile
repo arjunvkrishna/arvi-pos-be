@@ -41,8 +41,10 @@ ENV JAVA_OPTS="-XX:+UseSerialGC -Xms64m -Xmx320m -XX:MaxMetaspaceSize=160m -Xss5
 COPY --from=build /app/target/*.jar app.jar
 COPY logo-05.png .
 
+RUN mkdir -p /app/logs && chown -R 10001:10001 /app/logs
+
 # Run the application without root privileges. The jar is read-only at runtime;
-# writable temporary files are created under the image's world-writable /tmp.
+# writable temporary files are created under the image's world-writable /tmp and /app/logs.
 USER 10001:10001
 
 EXPOSE 8080

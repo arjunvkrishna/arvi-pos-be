@@ -41,13 +41,20 @@ public class TelegramNotificationService {
 
     public TelegramSetting getOrCreateSettings() {
         return settingRepository.getSettings().orElseGet(() -> {
-            TelegramSetting s = TelegramSetting.builder()
-                    .id(1L)
-                    .enabled(false)
-                    .dailySendTime("09:00")
-                    .timezone("Asia/Kolkata")
-                    .build();
-            return settingRepository.save(s);
+            try {
+                TelegramSetting s = TelegramSetting.builder()
+                        .enabled(false)
+                        .dailySendTime("09:00")
+                        .timezone("Asia/Kolkata")
+                        .build();
+                return settingRepository.save(s);
+            } catch (Exception e) {
+                return settingRepository.getSettings().orElseGet(() -> TelegramSetting.builder()
+                        .enabled(false)
+                        .dailySendTime("09:00")
+                        .timezone("Asia/Kolkata")
+                        .build());
+            }
         });
     }
 

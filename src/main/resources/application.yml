@@ -82,7 +82,7 @@ neram:
 
 logging:
   file:
-    path: ${LOG_PATH:logs}
+    path: ${LOG_PATH:/app/logs}
   logback:
     rollingpolicy:
       max-file-size: ${LOG_FILE_MAX_SIZE:10MB}

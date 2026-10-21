@@ -4,7 +4,7 @@
 
     <!-- Spring Property Placeholders -->
     <springProperty scope="context" name="APP_NAME" source="spring.application.name" defaultValue="arvi-pos" />
-    <springProperty scope="context" name="LOG_PATH" source="logging.file.path" defaultValue="logs" />
+    <springProperty scope="context" name="LOG_PATH" source="logging.file.path" defaultValue="/app/logs" />
     <springProperty scope="context" name="LOG_LEVEL_APP" source="logging.level.com.neram" defaultValue="INFO" />
     <springProperty scope="context" name="LOG_LEVEL_ROOT" source="logging.level.root" defaultValue="INFO" />
     <springProperty scope="context" name="LOG_MAX_FILE_SIZE" source="logging.logback.rollingpolicy.max-file-size" defaultValue="10MB" />
