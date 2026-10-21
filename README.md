@@ -1,0 +1,143 @@
+# ARVI POS - Backend Service
+
+High-performance, multi-tenant SaaS and multi-franchise Cafe Point of Sale (POS) backend engine built with Java 17, Spring Boot 3, PostgreSQL, and Spring Security.
+
+Designed with enterprise multi-unit restaurant capabilities inspired by Petpooja and Toast POS platforms.
+
+---
+
+## Key Features
+
+### 1. Multi-Tenant SaaS & Multi-Franchise Architecture
+- **SaaS Platform Super Admin (`ROLE_SUPER_ADMIN`)**:
+  - Global tenant onboarding and lifecycle management (`POST /api/super-admin/cafes`).
+  - Tiered subscription plan management (`STARTER`, `PRO`, `ENTERPRISE`).
+  - Configurable maximum franchise outlet limits per tenant.
+  - Platform-wide aggregate business metrics and revenue analytics (`GET /api/super-admin/analytics`).
+- **Brand / Cafe Admin (`ROLE_ADMIN` / `ROLE_CAFE_ADMIN`)**:
+  - Centralized menu, pricing, and category management across outlets.
+  - Multi-location franchise branch creation and configuration (`POST /api/outlets`).
+  - Comparative franchise branch performance and sales analytics (`GET /api/franchise/analytics`).
+- **Store / Branch Manager (`ROLE_MANAGER`)**:
+  - Store-scoped operations: employee scheduling, cash register opening/closing, table floor plan layout, daily expenses, and local stock audits.
+- **Cashier & Kitchen Staff (`ROLE_EMPLOYEE`, `ROLE_KITCHEN`)**:
+  - High-speed order creation, bill splitting, and live Kitchen Order Ticket (KOT) status tracking.
+
+### 2. POS & Restaurant Operations
+- **Order Management & Billing**:
+  - Dine-in, Takeaway, and Delivery order workflows.
+  - Automated GST / VAT tax calculation, itemized discounting, and payment method tracking (Cash, UPI, Card).
+  - Bill settlement, receipt reprints, and cancellation audit logs.
+- **Kitchen Order Ticket (KOT) Dispatching**:
+  - Smart category routing (separate Kitchen Food KOT vs Beverage / Juice KOT).
+  - Real-time Server-Sent Events (SSE) notification streams (`/api/bills/stream`).
+- **Table Floor Management**:
+  - Interactive table status mapping (Available, Occupied, Billed, Reserved).
+  - Seamless table merging and order transfer.
+- **Shift & Cash Drawer Registers**:
+  - Cashier shift opening, floating balance verification, cash drops, and end-of-shift reconciliation reports.
+- **Inventory & Supply Chain**:
+  - Ingredient and stock level tracking with automated low-stock warnings.
+  - Vendor management and inventory transaction logs.
+- **Hardware Integration**:
+  - Cloud thermal printer bridge polling protocol (`/api/printer/bridge/poll`) with lease claims, idempotency, and automated retry mechanisms for LAN ESC/POS network printers.
+- **Public Contactless Menu**:
+  - QR-code accessible public menu (`/api/public/menu`) with rate limiting and secure read-only access.
+
+---
+
+## Tech Stack
+
+- **Language & Runtime**: Java 17 (Eclipse Temurin)
+- **Framework**: Spring Boot 3.x, Spring Data JPA, Spring Security
+- **Authentication**: Stateless JWT (JSON Web Tokens) with refresh token rotation
+- **Database**: PostgreSQL 18 with Flyway schema migration versioning
+- **Build Tool**: Apache Maven 3.9+
+- **Containerization**: Multi-stage minimal Ubuntu / Temurin JRE container with non-root security profile
+
+---
+
+## Project Structure
+
+```
+arvi-pos-be/
+├── src/
+│   ├── main/
+│   │   ├── java/com/neram/pos/
+│   │   │   ├── config/          # Security, WebMvc, Flyway, and Async configurations
+│   │   │   ├── controller/      # REST API Controllers (SuperAdmin, Outlet, Bill, Menu, etc.)
+│   │   │   ├── dto/             # Data Transfer Objects & API Request/Response models
+│   │   │   ├── entity/          # JPA Domain Entities (Tenant, Outlet, User, Bill, etc.)
+│   │   │   ├── repository/      # Spring Data JPA Repositories
+│   │   │   ├── security/        # TenantSecurityService, JWT Filter, CustomUserDetailsService
+│   │   │   └── service/         # Business logic and transaction management
+│   │   └── resources/
+│   │       ├── db/migration/    # Versioned Flyway SQL migration scripts (V1 through V61)
+│   │       └── application.yml  # Application properties and environment variable bindings
+│   └── test/                    # JUnit 5 integration and unit tests
+├── Dockerfile                   # Multi-stage optimized JRE Docker build
+├── pom.xml                      # Maven dependencies and build plugins
+└── .gitignore                   # Git exclusion rules
+```
+
+---
+
+## Configuration & Environment Variables
+
+All sensitive values are injected strictly through environment variables:
+
+| Variable | Description | Default / Example |
+|---|---|---|
+| `DB_HOST` | PostgreSQL host | `postgres` |
+| `DB_PORT` | PostgreSQL port | `5432` |
+| `DB_NAME` | Database name | `arvi_pos` |
+| `DB_USER` | Database username | `arvi_user` |
+| `DB_PASSWORD` | Database user password | `<your_db_password>` |
+| `JWT_SECRET` | 256-bit secret key for HMAC-SHA512 signing | `<your_jwt_secret_key>` |
+| `JWT_EXPIRATION` | Token validity duration in milliseconds | `86400000` (24h) |
+| `PRINTER_BRIDGE_TOKEN` | Shared secret token for ESP32 print bridge | `<your_bridge_token>` |
+| `SEED_DEMO_DATA` | Flag to seed demo data on fresh startup | `true` or `false` |
+| `SEED_DEMO_USERS` | Flag to seed demo users on fresh startup | `true` or `false` |
+| `JAVA_OPTS` | JVM heap and memory optimization flags | `-Xms128m -Xmx512m` |
+
+---
+
+## Getting Started
+
+### Local Development (Maven)
+
+Ensure PostgreSQL is running locally, then execute:
+
+```bash
+# Package and verify tests
+mvn clean test
+
+# Run Spring Boot application locally
+mvn spring-boot:run
+```
+
+The application will start on `http://localhost:8080`.
+
+### Docker Build
+
+```bash
+# Build Docker image
+docker build -t arjunvk/arvi-backend:v1.0.0 .
+
+# Run container
+docker run -d \
+  -p 8080:8080 \
+  --name arvi-backend \
+  --env-file .env \
+  arjunvk/arvi-backend:v1.0.0
+```
+
+---
+
+## Health & Verification Endpoints
+
+- **Health Check**: `GET /api/health`
+- **Authentication**: `POST /api/auth/login`
+- **SaaS Cafes**: `GET /api/super-admin/cafes`
+- **Franchise Outlets**: `GET /api/outlets`
+- **Franchise Analytics**: `GET /api/franchise/analytics`
