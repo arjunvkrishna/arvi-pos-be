@@ -1,0 +1,303 @@
+-- ============================================================
+-- NERAM POS System - Correct Business Menu Data (v2.4.2)
+-- Loaded conditionally when SEED_DEMO_DATA=true
+-- Full menu as approved by Neram management.
+-- ============================================================
+
+-- Categories (21 Categories)
+INSERT INTO categories (id, name, description, icon, sort_order) VALUES
+(1,  'Starters',                    'Crispy appetizers, finger foods and quick bites',               'fa-cookie-bite',              1),
+(2,  'Egg Preparations',            'Farm fresh egg omelettes served with garlic bread',             'fa-egg',                      2),
+(3,  'Soups',                       'Warm and comforting soups served with accompaniments',          'fa-bowl-food',                3),
+(4,  'Sandwiches',                  'Toasted and grilled gourmet sandwiches with french fries',     'fa-bread-slice',              4),
+(5,  'Wrappers',                    'Flavour-packed rolled wraps and loaded quesadillas',            'fa-scroll',                   5),
+(6,  'Salads',                      'Fresh crisp greens, artisanal dressings and vibrant toppings', 'fa-leaf',                     6),
+(7,  'Fried Chicken',               'Crispy golden fried chicken served with seasoned fries',       'fa-drumstick-bite',           7),
+(8,  'Burgers',                     'Juicy grilled patties in soft buns served with fries',         'fa-burger',                   8),
+(9,  'Signature Food',              'Signature gourmet specialties crafted to perfection',          'fa-crown',                    9),
+(10, 'Pastas',                      'Authentic Italian pasta in rich savory sauces',                'fa-bowl-rice',               10),
+(11, 'Desserts',                    'Artisanal sweet desserts, souffles and flan',                  'fa-ice-cream',               11),
+(12, 'Family Combo',                'Value family meal combinations',                               'fa-users',                   12),
+(13, 'Grilled Food',                'Sizzling grilled steaks, chicken and marinated seafood',       'fa-fire',                    13),
+(14, 'Fried Chicken Varieties',     'Classic and specialty fried chicken preparations',             'fa-drumstick-bite',          14),
+(15, 'Chinese Food',                'Authentic Chinese noodles, rice and Indo-Chinese specialties', 'fa-bowl-rice',               15),
+(16, 'Special Food',                'Chef special platters and value combinations',                 'fa-star',                    16),
+(17, 'Shrimp & Prawns Varieties',   'Golden fried and sauced prawn and shrimp specialties',        'fa-shrimp',                  17),
+(18, 'High-Protein & Gym Bowls',    'Nutritious protein-packed bowls and power salads',             'fa-dumbbell',                18),
+(19, 'Side Dishes',                 'Crispy sides and seasoned accompaniments',                     'fa-utensils',                19),
+(20, 'Loaded Fries',                'Indulgent loaded fries with premium toppings',                'fa-plate-wheat',              20),
+(21, 'Rice Meals',                  'Hearty rice meals served with accompaniments',                'fa-bowl-rice',               21),
+(22, 'Lassi',                       'Traditional chilled yogurt lassi varieties',                  'fa-glass-water',             22),
+(23, 'Juices',                      'Freshly squeezed fruit juices and revitalizing blends',       'fa-lemon',                   23),
+(24, 'Mojitos & Coolers',           'Refreshing iced mojitos, mocktails and summer coolers',       'fa-martini-glass-citrus',    24),
+(25, 'Shakes',                      'Rich and creamy thickshakes and specialty fruit shakes',      'fa-blender',                 25),
+(26, 'Coffee & Tea (Cold)',         'Chilled gourmet iced teas and iced coffee specialties',       'fa-glass-whiskey',           26),
+(27, 'Smoothies',                   'Nutritious fresh fruit smoothies and blended drinks',         'fa-apple-whole',             27),
+(28, 'Falooda & Milk',              'Decadent layered royal faloodas and traditional aval milk',   'fa-ice-cream',               28),
+(29, 'Hot Coffee & Tea',            'Steaming artisanal coffees, filter coffee and spiced teas',   'fa-mug-hot',                 29)
+ON CONFLICT (id) DO UPDATE SET
+  name = EXCLUDED.name, description = EXCLUDED.description,
+  icon = EXCLUDED.icon, sort_order = EXCLUDED.sort_order;
+SELECT setval('categories_id_seq', (SELECT COALESCE(MAX(id), 1) FROM categories));
+
+-- Menu Items (160 Dishes)
+INSERT INTO menu_items (id, name, category_id, price, description, is_veg, is_available) VALUES
+-- STARTERS (category 1)
+(1,  'Fries with Spicy Mayo',        1, 180.0, NULL, TRUE,  TRUE),
+(2,  'Cheesy Chicken Fries',         1, 250.0, NULL, FALSE, TRUE),
+(3,  'Mexican Chicken Nachos',       1, 310.0, NULL, FALSE, TRUE),
+(4,  'Loaded Fries (Chicken)',        1, 320.0, NULL, FALSE, TRUE),
+(5,  'Loaded Fries (Beef)',           1, 340.0, NULL, FALSE, TRUE),
+(6,  'Veg Spring Roll',              1, 210.0, NULL, TRUE,  TRUE),
+(7,  'Veg Nuggets',                  1, 200.0, NULL, TRUE,  TRUE),
+(8,  'Cheese Garlic Bread',          1, 220.0, NULL, TRUE,  TRUE),
+(9,  'Fried Chicken Wings',          1, 290.0, NULL, FALSE, TRUE),
+(10, 'Chicken Nuggets',              1, 240.0, NULL, FALSE, TRUE),
+(11, 'Fish Nuggets',                 1, 280.0, NULL, FALSE, TRUE),
+(12, 'Chicken Popcorn',              1, 240.0, NULL, FALSE, TRUE),
+(13, 'Chicken Lollipop',             1, 310.0, NULL, FALSE, TRUE),
+(14, 'Fish Finger',                  1, 340.0, NULL, FALSE, TRUE),
+(15, 'Peri-Peri Potato',             1, 190.0, NULL, TRUE,  TRUE),
+(16, 'Veggies',                      1, 190.0, NULL, TRUE,  TRUE),
+(17, 'Golden Cheese Balls',          1, 280.0, NULL, TRUE,  TRUE),
+(18, 'Cheese Chilli Toast',          1, 210.0, NULL, TRUE,  TRUE),
+(19, 'Chicken Spring Roll',          1, 250.0, NULL, FALSE, TRUE),
+-- EGG PREPARATIONS (category 2)
+(20, 'Cheese and Tomato Omelette',   2, 190.0, NULL, FALSE, TRUE),
+(21, 'Plain Omelette',               2, 120.0, NULL, FALSE, TRUE),
+(22, 'Cheese Omelette',              2, 150.0, NULL, FALSE, TRUE),
+(23, 'Scrambled Eggs',               2, 140.0, NULL, FALSE, TRUE),
+(24, 'Baked Omelette',               2, 200.0, NULL, FALSE, TRUE),
+-- SOUPS (category 3)
+(25, 'Minestrone Soup (Chicken)',    3, 230.0, NULL, FALSE, TRUE),
+(26, 'Minestrone Soup (Veg)',        3, 190.0, NULL, TRUE,  TRUE),
+(27, 'Cream of Chicken Soup',        3, 230.0, NULL, FALSE, TRUE),
+(28, 'Cream of Vegetable Soup',      3, 190.0, NULL, TRUE,  TRUE),
+(29, 'Hot and Sour Soup (Veg)',      3, 150.0, NULL, TRUE,  TRUE),
+(30, 'Hot and Sour Soup (Chicken)',  3, 220.0, NULL, FALSE, TRUE),
+(31, 'Sweet Corn Soup (Veg)',        3, 180.0, NULL, TRUE,  TRUE),
+(32, 'Sweet Corn Soup (Chicken)',    3, 220.0, NULL, FALSE, TRUE),
+(33, 'Manchow Soup (Veg)',           3, 190.0, NULL, TRUE,  TRUE),
+(34, 'Manchow Soup (Chicken)',       3, 230.0, NULL, FALSE, TRUE),
+(35, 'Clear Soup (Veg)',             3, 160.0, NULL, TRUE,  TRUE),
+(36, 'Clear Soup (Chicken)',         3, 200.0, NULL, FALSE, TRUE),
+(37, 'Lemon Coriander Soup',         3, 180.0, NULL, TRUE,  TRUE),
+-- SANDWICHES (category 4)
+(38, 'Grilled Cheese and Tomato Sandwich',              4, 210.0, NULL, TRUE,  TRUE),
+(39, 'Chicken Club Sandwich',                           4, 330.0, NULL, FALSE, TRUE),
+(40, 'Chicken Hot Garlic Sandwich',                     4, 280.0, NULL, FALSE, TRUE),
+(41, 'Grilled Chicken, Cheese and Jalapeño Sandwich',   4, 290.0, NULL, FALSE, TRUE),
+(42, 'Veg Club Sandwich',                               4, 250.0, NULL, TRUE,  TRUE),
+(43, 'Veg Grilled Cheese Sandwich',                     4, 210.0, NULL, TRUE,  TRUE),
+(44, 'Egg Mayo Sandwich',                               4, 190.0, NULL, FALSE, TRUE),
+(45, 'Boiled Egg and Pepper Sandwich',                  4, 180.0, NULL, FALSE, TRUE),
+-- WRAPPERS (category 5)
+(46, 'Mexican Chicken Wrap',         5, 280.0, NULL, FALSE, TRUE),
+(47, 'Crispy Chicken Fajita Wrap',   5, 290.0, NULL, FALSE, TRUE),
+(48, 'BBQ Chicken Fajita Wrap',      5, 290.0, NULL, FALSE, TRUE),
+(49, 'Veg Fajita Wrap',              5, 220.0, NULL, TRUE,  TRUE),
+(50, 'Mexican Chicken Quesadilla',   5, 320.0, NULL, FALSE, TRUE),
+-- SALADS (category 6)
+(51, 'Greek Salad',                           6, 230.0, NULL, TRUE,  TRUE),
+(52, 'Watermelon Feta Salad',                 6, 260.0, NULL, TRUE,  TRUE),
+(53, 'Grilled Chicken with Balsamic Dressing',6, 330.0, NULL, FALSE, TRUE),
+(54, 'Garden Fresh Green Salad',              6, 170.0, NULL, TRUE,  TRUE),
+(55, 'Sprouted Moong Salad',                  6, 180.0, NULL, TRUE,  TRUE),
+(56, 'Pasta Salad (Veg)',                     6, 240.0, NULL, TRUE,  TRUE),
+(57, 'Pasta Salad (Chicken)',                 6, 290.0, NULL, FALSE, TRUE),
+(58, 'Chicken Caesar Salad',                  6, 330.0, NULL, FALSE, TRUE),
+(59, 'Chicken Cobb Salad',                    6, 340.0, NULL, FALSE, TRUE),
+(60, 'Boiled Vegetables',                     6, 280.0, NULL, TRUE,  TRUE),
+-- FRIED CHICKEN (category 7)
+(61, '2-Piece Chicken Legs with Fries',             7, 280.0, NULL, FALSE, TRUE),
+(62, '4-Piece Chicken Legs & Thighs with Fries',    7, 490.0, NULL, FALSE, TRUE),
+(63, '6-Piece Chicken Strips with Fries',           7, 380.0, NULL, FALSE, TRUE),
+-- BURGERS (category 8)
+(64, 'Veg Burger',                                              8, 220.0, NULL, TRUE,  TRUE),
+(65, 'Crispy Fried Chicken Burger',                             8, 310.0, NULL, FALSE, TRUE),
+(66, 'Chicken Burger',                                          8, 280.0, NULL, FALSE, TRUE),
+(67, 'Classic Beef Burger',                                     8, 350.0, NULL, FALSE, TRUE),
+(68, 'Neram Special Jumbo Beef Burger',                         8, 460.0, NULL, FALSE, TRUE),
+(69, 'Classic Double Cheeseburger (Smashed)',                   8, 410.0, NULL, FALSE, TRUE),
+(70, 'Neram Special Cheese Volcano Burger (Molten Cheese Lava Bun)', 8, 440.0, NULL, FALSE, TRUE),
+(71, 'Crispy Spicy Zinger Burger',                              8, 320.0, NULL, FALSE, TRUE),
+(72, 'Ultimate Veggie Patty Burger',                            8, 230.0, NULL, TRUE,  TRUE),
+(73, 'Mexican Jalapeño & Salsa Burger',                         8, 330.0, NULL, FALSE, TRUE),
+(74, 'Chef''s Special Neram Signature Burger',                  8, 480.0, NULL, FALSE, TRUE),
+-- SIGNATURE FOOD (category 9)
+(75, 'Neram Special Chicken Paella with Spanish',  9, 480.0, NULL, FALSE, TRUE),
+(76, 'Neram Special Chicken Cordon Bleu',          9, 440.0, NULL, FALSE, TRUE),
+(77, 'Chicken Donut',                              9, 270.0, NULL, FALSE, TRUE),
+-- PASTAS (category 10)
+(78,  'Chicken Spaghetti Bolognese',                                      10, 410.0, NULL, FALSE, TRUE),
+(79,  'Chicken Macaroni',                                                  10, 320.0, NULL, FALSE, TRUE),
+(80,  'Chicken Alfredo',                                                   10, 370.0, NULL, FALSE, TRUE),
+(81,  'Neram Special Lasagne',                                             10, 450.0, NULL, FALSE, TRUE),
+(82,  'Pasta Aglio e Olio Peperoncino (Veg)',                              10, 250.0, NULL, TRUE,  TRUE),
+(83,  'Pasta Aglio e Olio Peperoncino (Chicken/Special)',                  10, 340.0, NULL, FALSE, TRUE),
+(84,  'Penne Arrabbiata (Red Sauce) or Fettuccine Alfredo (White Sauce)',  10, 310.0, NULL, TRUE,  TRUE),
+(85,  'Creamy Pesto Pasta',                                                10, 320.0, NULL, TRUE,  TRUE),
+(86,  'Mac and Cheese',                                                    10, 330.0, NULL, TRUE,  TRUE),
+(87,  'Mexican Pasta/Cajun Pasta',                                         10, 340.0, NULL, FALSE, TRUE),
+(88,  'Penne Pasta/Farfalle Pasta',                                        10, 320.0, NULL, TRUE,  TRUE),
+(89,  'Beef Pasta (Red and White Sauce)',                                   10, 390.0, NULL, FALSE, TRUE),
+(90,  'Pesto Pasta',                                                       10, 340.0, NULL, TRUE,  TRUE),
+-- DESSERTS (category 11)
+(91, 'Dates and Nuts Flan',                11, 210.0, NULL, TRUE, TRUE),
+(92, 'Neram Special Orange Crème Brûlée',  11, 260.0, NULL, TRUE, TRUE),
+(93, 'Mango Soufflé',                      11, 220.0, NULL, TRUE, TRUE),
+(94, 'Brownie',                            11, 160.0, NULL, TRUE, TRUE),
+(95, 'Brownie with Ice Cream',             11, 210.0, NULL, TRUE, TRUE),
+(96, 'Chocolate Soufflé',                  11, 230.0, NULL, TRUE, TRUE),
+-- FAMILY COMBO (category 12)
+(97, 'Family Club Combo (2 Burgers + 2 Sandwiches + 2 Natafi Wraps + French Fries + 1 L Pepsi)',
+     12, 1099.0, '2 Burgers + 2 Sandwiches + 2 Natafi Wraps + French Fries + 1 L Pepsi', FALSE, TRUE),
+-- GRILLED FOOD (category 13)
+(98,  'Neram Special Fish and Chips',       13, 450.0, NULL, FALSE, TRUE),
+(99,  'Green Masala Chicken Leg',           13, 340.0, NULL, FALSE, TRUE),
+(100, 'Neram Special Chicken Parmigiana',   13, 440.0, NULL, FALSE, TRUE),
+(101, 'Neram Special Sirloin Steak',        13, 580.0, NULL, FALSE, TRUE),
+(102, 'Neram Special Ribeye Steak',         13, 660.0, NULL, FALSE, TRUE),
+(103, 'Chicken Monoko',                     13, 460.0, NULL, FALSE, TRUE),
+(104, 'Chicken Steak',                      13, 410.0, NULL, FALSE, TRUE),
+(105, 'Beef Monoko',                        13, 460.0, NULL, FALSE, TRUE),
+(106, 'Beef Steak',                         13, 490.0, NULL, FALSE, TRUE),
+(107, 'Beef Stroganoff',                    13, 520.0, NULL, FALSE, TRUE),
+-- FRIED CHICKEN VARIETIES (category 14)
+(108, 'Classic Crispy Fried Chicken',   14, 370.0, NULL, FALSE, TRUE),
+(109, 'Spicy Hot Wings',                14, 310.0, NULL, FALSE, TRUE),
+(110, 'Popcorn Chicken',                14, 240.0, NULL, FALSE, TRUE),
+(111, 'Korean Glazed Fried Chicken',    14, 390.0, NULL, FALSE, TRUE),
+(112, 'Chicken Tenders',                14, 280.0, NULL, FALSE, TRUE),
+(113, 'Chicken Strips',                 14, 280.0, NULL, FALSE, TRUE),
+-- CHINESE FOOD (category 15)
+(114, 'Hakka Noodles',          15, 250.0, NULL, TRUE,  TRUE),
+(115, 'Schezwan Fried Rice',    15, 290.0, NULL, TRUE,  TRUE),
+(116, 'Veg Manchurian',         15, 230.0, NULL, TRUE,  TRUE),
+(117, 'Chicken Manchurian',     15, 310.0, NULL, FALSE, TRUE),
+(118, 'Chilli Chicken',         15, 310.0, NULL, FALSE, TRUE),
+(119, 'Chilli Paneer',          15, 290.0, NULL, TRUE,  TRUE),
+(120, 'Spring Rolls',           15, 210.0, NULL, TRUE,  TRUE),
+(121, 'Chilli Gobi',            15, 220.0, NULL, TRUE,  TRUE),
+(122, 'Chicken Fried Rice',     15, 280.0, NULL, FALSE, TRUE),
+(123, 'Veg Fried Rice',         15, 220.0, NULL, TRUE,  TRUE),
+(124, 'Noodles (Chicken)',      15, 280.0, NULL, FALSE, TRUE),
+(125, 'Noodles (Veg)',          15, 220.0, NULL, TRUE,  TRUE),
+-- SPECIAL FOOD (category 16)
+(126, 'Neram Special Fried Chicken Combo',  16, 499.0, NULL, FALSE, TRUE),
+(127, 'Mexican Rice Served with Salsa',     16, 270.0, NULL, TRUE,  TRUE),
+-- SHRIMP & PRAWNS VARIETIES (category 17)
+(128, 'Golden Fried Shrimps',                  17, 410.0, NULL, FALSE, TRUE),
+(129, 'Neram Special Butter Garlic Prawns',    17, 480.0, NULL, FALSE, TRUE),
+(130, 'Dynamite Shrimps',                      17, 460.0, NULL, FALSE, TRUE),
+(131, 'Prawns Tempura',                        17, 440.0, NULL, FALSE, TRUE),
+(132, 'Szechuan Chilli Prawns',                17, 430.0, NULL, FALSE, TRUE),
+-- HIGH-PROTEIN & GYM BOWLS (category 18)
+(133, 'Grilled Chicken & Quinoa Energy Bowl',   18, 390.0, NULL, FALSE, TRUE),
+(134, 'Egg White & Avocado Power Salad',        18, 330.0, NULL, FALSE, TRUE),
+(135, 'Tofu & Brown Rice Teriyaki Bowl',        18, 340.0, NULL, TRUE,  TRUE),
+(136, 'Mexican Black Bean & Chicken Salad',     18, 350.0, NULL, FALSE, TRUE),
+-- SIDE DISHES (category 19)
+(137, 'French Fries',      19, 160.0, NULL, TRUE, TRUE),
+(138, 'Potato Wedges',     19, 180.0, NULL, TRUE, TRUE),
+(139, 'Mashed Potato',     19, 180.0, NULL, TRUE, TRUE),
+-- LOADED FRIES (category 20)
+(140, 'Cheesy Bacon Loaded Fries',                         20, 340.0, NULL, FALSE, TRUE),
+(141, 'Mexican Taco & Salsa Loaded Fries',                 20, 320.0, NULL, FALSE, TRUE),
+(142, 'BBQ Pulled Chicken Loaded Fries',                   20, 330.0, NULL, FALSE, TRUE),
+(143, 'Buffalo Chicken & Ranch Loaded Fries',              20, 330.0, NULL, FALSE, TRUE),
+(144, 'Neram Special Philly Cheesesteak Loaded Fries',     20, 410.0, NULL, FALSE, TRUE),
+(145, 'Chilli Cheese Loaded Fries',                        20, 250.0, NULL, TRUE,  TRUE),
+(146, 'Peri-Peri Garlic Cheese Fries',                     20, 250.0, NULL, TRUE,  TRUE),
+(147, 'Greek Feta & Herb Loaded Fries',                    20, 280.0, NULL, TRUE,  TRUE),
+-- RICE MEALS (category 21) - multi-tier pricing in description; price 0 for POS selection
+(148, 'Moroccan Chicken with Rice',  21, 0.0, 'Quarter: ₹260 / Half: ₹500 / Full: ₹900', FALSE, TRUE),
+(149, 'Grilled Chicken with Rice',   21, 0.0, 'Quarter: ₹260 / Half: ₹500 / Full: ₹900', FALSE, TRUE),
+(150, 'Mexican Chicken with Rice',   21, 0.0, 'Quarter: ₹260 / Half: ₹500 / Full: ₹900', FALSE, TRUE),
+(151, 'Drakush with Rice',           21, 0.0, 'Quarter: ₹260 / Half: ₹500 / Full: ₹900', FALSE, TRUE),
+-- LASSI (category 22)
+(152, 'Sweet Lassi',                     22, 120.0, NULL, TRUE, TRUE),
+(153, 'Mango Lassi',                     22, 130.0, NULL, TRUE, TRUE),
+(154, 'Rose Lassi',                      22, 130.0, NULL, TRUE, TRUE),
+(155, 'Dry Fruit Lassi',                 22, 150.0, NULL, TRUE, TRUE),
+(156, 'Salted / Masala Lassi',           22, 160.0, NULL, TRUE, TRUE),
+-- JUICES (category 23)
+(157, 'Fresh Orange Juice',              23, 110.0, NULL, TRUE, TRUE),
+(158, 'Watermelon Juice',                23,  80.0, NULL, TRUE, TRUE),
+(159, 'Pineapple Juice',                 23,  90.0, NULL, TRUE, TRUE),
+(160, 'Pomegranate Juice',               23, 130.0, NULL, TRUE, TRUE),
+(161, 'Mixed Fruit Juice',               23, 130.0, NULL, TRUE, TRUE),
+(162, 'ABC (Apple Beetroot Carrot) Juice', 23, 130.0, NULL, TRUE, TRUE),
+(163, 'Grape Juice',                     23,  90.0, NULL, TRUE, TRUE),
+(164, 'Mango Juice',                     23, 120.0, NULL, TRUE, TRUE),
+-- MOJITOS & COOLERS (category 24)
+(165, 'Original Mint Mojito',            24, 140.0, NULL, TRUE, TRUE),
+(166, 'Passion Fruit Mojito',            24, 160.0, NULL, TRUE, TRUE),
+(167, 'Watermelon Mojito',               24, 160.0, NULL, TRUE, TRUE),
+(168, 'Green Apple Mojito',              24, 120.0, NULL, TRUE, TRUE),
+(169, 'Fruit Punch',                     24, 140.0, NULL, TRUE, TRUE),
+(170, 'Blue Lagoon',                     24, 130.0, NULL, TRUE, TRUE),
+(171, 'Dark Lime',                       24, 130.0, NULL, TRUE, TRUE),
+(172, 'Life of 3',                       24, 150.0, NULL, TRUE, TRUE),
+(173, 'Kannur Cocktail',                 24, 130.0, NULL, TRUE, TRUE),
+-- SHAKES (category 25)
+(174, 'Chocolate Fudge Shake',           25, 170.0, NULL, TRUE, TRUE),
+(175, 'Oreo Thickshake',                 25, 160.0, NULL, TRUE, TRUE),
+(176, 'KitKat Thickshake',               25, 170.0, NULL, TRUE, TRUE),
+(177, 'Strawberry Shake',                25, 140.0, NULL, TRUE, TRUE),
+(178, 'Vanilla Bean Shake',              25, 130.0, NULL, TRUE, TRUE),
+(179, 'Mango Shake',                     25, 140.0, NULL, TRUE, TRUE),
+(180, 'Protein Shake',                   25, 190.0, NULL, TRUE, TRUE),
+(181, 'Avocado Shake',                   25, 180.0, NULL, TRUE, TRUE),
+(182, 'Butter Shake',                    25, 140.0, NULL, TRUE, TRUE),
+(183, 'Chikku Shake',                    25, 130.0, NULL, TRUE, TRUE),
+(184, 'Omani Shake',                     25, 170.0, NULL, TRUE, TRUE),
+(185, 'Arabian Shake',                   25, 160.0, NULL, TRUE, TRUE),
+-- COFFEE & TEA (COLD) (category 26)
+(186, 'Iced Lemon and Mint Tea',         26, 110.0, NULL, TRUE, TRUE),
+(187, 'Orange Tea',                      26, 120.0, NULL, TRUE, TRUE),
+(188, 'Ginger Watermelon Tea',           26, 180.0, NULL, TRUE, TRUE),
+(189, 'Cold Coffee with Ice Cream',      26, 200.0, NULL, TRUE, TRUE),
+-- SMOOTHIES (category 27)
+(190, 'Chocolate Smoothie',              27, 200.0, NULL, TRUE, TRUE),
+(191, 'Banana Smoothie',                 27, 210.0, NULL, TRUE, TRUE),
+(192, 'Papaya Smoothie',                 27, 200.0, NULL, TRUE, TRUE),
+(193, 'Mango Smoothie',                  27, 220.0, NULL, TRUE, TRUE),
+(194, 'Coconut Smoothie',                27, 230.0, NULL, TRUE, TRUE),
+-- FALOODA & MILK (category 28)
+(195, 'Royal Falooda (Pista / Strawberry / Butterscotch)', 28, 190.0, NULL, TRUE, TRUE),
+(196, 'Falooda (Strawberry / Butterscotch / Pista)',       28, 150.0, NULL, TRUE, TRUE),
+(197, 'Aval Milk',                                         28,  90.0, NULL, TRUE, TRUE),
+-- HOT COFFEE & TEA (category 29)
+(198, 'Normal Coffee',                   29,  30.0, NULL, TRUE, TRUE),
+(199, 'Brew Coffee',                     29,  50.0, NULL, TRUE, TRUE),
+(200, 'Classic Coffee',                  29,  40.0, NULL, TRUE, TRUE),
+(201, 'Filter Coffee',                   29,  40.0, NULL, TRUE, TRUE),
+(202, 'Masala Tea',                      29,  30.0, NULL, TRUE, TRUE),
+(203, 'Malai Tea',                       29,  40.0, NULL, TRUE, TRUE)
+ON CONFLICT (id) DO NOTHING;
+SELECT setval('menu_items_id_seq', (SELECT COALESCE(MAX(id), 1) FROM menu_items));
+
+-- Sample Inventory
+INSERT INTO inventory_items (id, name, unit, quantity, min_quantity, cost_per_unit) VALUES
+(1, 'Rice', 'kg', 50, 10, 45),
+(2, 'Wheat Flour', 'kg', 25, 5, 35),
+(3, 'Cooking Oil', 'litre', 20, 5, 130),
+(4, 'Onions', 'kg', 15, 3, 25),
+(5, 'Tomatoes', 'kg', 10, 2, 40),
+(6, 'Milk', 'litre', 30, 10, 55),
+(7, 'Sugar', 'kg', 10, 2, 45),
+(8, 'Salt', 'kg', 5, 1, 20),
+(9, 'Chicken', 'kg', 8, 2, 220),
+(10, 'Mutton', 'kg', 5, 1, 650)
+ON CONFLICT (id) DO NOTHING;
+SELECT setval('inventory_items_id_seq', (SELECT COALESCE(MAX(id), 1) FROM inventory_items));
+
+-- Sample Suppliers
+INSERT INTO suppliers (id, name, contact_person, phone, category, payment_terms) VALUES
+(1, 'Fresh Farm Veggies', 'Ramu', '9876543210', 'Vegetables', 7),
+(2, 'Kerala Dairy Co', 'Suresh', '9876543211', 'Dairy', 15),
+(3, 'Metro Meats', 'Anwar', '9876543212', 'Meat & Poultry', 7),
+(4, 'Grain Merchants Ltd', 'Priya', '9876543213', 'Groceries', 30)
+ON CONFLICT (id) DO NOTHING;
+SELECT setval('suppliers_id_seq', (SELECT COALESCE(MAX(id), 1) FROM suppliers));

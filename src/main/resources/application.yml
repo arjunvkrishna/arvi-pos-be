@@ -1,0 +1,69 @@
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://${DB_HOST}:${DB_PORT}/${DB_NAME}}
+    driver-class-name: org.postgresql.Driver
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+      max-lifetime: 1800000
+
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: none
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+        globally_quoted_identifiers: true
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    validate-on-migrate: false
+    out-of-order: true
+
+server:
+  port: 8080
+  servlet:
+    context-path: /
+
+neram:
+  db:
+    readonly:
+      user: ${DB_READONLY_USER:}
+      password: ${DB_READONLY_PASSWORD:}
+  security:
+    seed-demo-users: ${SEED_DEMO_USERS:${SEED_DEMO_DATA:${SEED_TEST_DATA:false}}}
+  seed:
+    demo-data: ${SEED_DEMO_DATA:${SEED_TEST_DATA:${SEED_DEMO_USERS:false}}}
+  jwt:
+    secret: ${JWT_SECRET}
+    expiration: ${JWT_EXPIRATION:86400000}  # default 24 hours in ms
+  printer:
+    host: ${PRINTER_HOST:192.168.1.37}
+    port: ${PRINTER_PORT:9100}
+    enabled: ${PRINTER_ENABLED:true}
+    bill-host: ${BILL_PRINTER_HOST:${PRINTER_HOST:192.168.1.37}}
+    bill-port: ${BILL_PRINTER_PORT:${PRINTER_PORT:9100}}
+    bill-enabled: ${BILL_PRINTER_ENABLED:${PRINTER_ENABLED:true}}
+    kot-host: ${KOT_PRINTER_HOST:192.168.1.47}
+    kot-port: ${KOT_PRINTER_PORT:9100}
+    kot-enabled: ${KOT_PRINTER_ENABLED:true}
+    juice-kot-host: ${JUICE_KOT_PRINTER_HOST:192.168.1.42}
+    juice-kot-port: ${JUICE_KOT_PRINTER_PORT:9100}
+    juice-kot-enabled: ${JUICE_KOT_PRINTER_ENABLED:true}
+    bridge-token: ${PRINTER_BRIDGE_TOKEN:}
+  telegram:
+    bot-token: ${TELEGRAM_BOT_TOKEN:}
+    webhook-secret: ${TELEGRAM_WEBHOOK_SECRET:}
+
+logging:
+  level:
+    com.neram: INFO
+    org.springframework.security: WARN
+    org.flywaydb: INFO
