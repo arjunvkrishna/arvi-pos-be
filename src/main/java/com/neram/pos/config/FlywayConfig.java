@@ -23,7 +23,8 @@ public class FlywayConfig {
                 flyway.migrate();
                 log.info("Flyway migrations executed successfully.");
             } catch (Exception e) {
-                log.error("Flyway migrate encountered exception: {}. Continuing with defensive DatabaseSchemaEnsurer.", e.getMessage());
+                log.error("Flyway migrate encountered exception: {}", e.getMessage(), e);
+                throw e;
             }
         };
     }

@@ -1,7 +1,0 @@
--- Flyway Migration V9: Add subtotal, GST, and adjustment fields to supplier_invoices
-ALTER TABLE supplier_invoices 
-    ADD COLUMN IF NOT EXISTS subtotal DOUBLE PRECISION DEFAULT 0.0,
-    ADD COLUMN IF NOT EXISTS gst_rate DOUBLE PRECISION DEFAULT 0.0,
-    ADD COLUMN IF NOT EXISTS gst_amount DOUBLE PRECISION DEFAULT 0.0,
-    ADD COLUMN IF NOT EXISTS other_charges DOUBLE PRECISION DEFAULT 0.0,
-    ADD COLUMN IF NOT EXISTS discount DOUBLE PRECISION DEFAULT 0.0;

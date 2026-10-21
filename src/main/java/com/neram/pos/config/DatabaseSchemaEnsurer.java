@@ -1,6 +1,5 @@
 package com.neram.pos.config;
 
-import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
@@ -17,17 +16,11 @@ import org.springframework.stereotype.Component;
  */
 @Slf4j
 @Component
-@Order(Ordered.HIGHEST_PRECEDENCE)
+@Order(Ordered.LOWEST_PRECEDENCE)
 @RequiredArgsConstructor
 public class DatabaseSchemaEnsurer implements ApplicationRunner {
 
     private final JdbcTemplate jdbcTemplate;
-
-    @PostConstruct
-    public void onInit() {
-        log.info("Running early database schema verification on bean initialization...");
-        ensureSchema();
-    }
 
     @Override
     public void run(ApplicationArguments args) {
