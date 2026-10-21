@@ -16,12 +16,16 @@ public class LoginResponse {
     private String role;
     private Long employeeId;
     private String employeeName;
+    private Boolean canBill;
     private Boolean canTakeOrders;
     private Boolean canManageInventory;
+    private Boolean canManageExpenses;
+    private Boolean canViewReports;
     private Boolean mustChangePassword;
     private Long tenantId;
     private String tenantName;
     private String tenantCode;
+    private String logoUrl;
     private Long outletId;
     private String outletName;
     private String outletCode;

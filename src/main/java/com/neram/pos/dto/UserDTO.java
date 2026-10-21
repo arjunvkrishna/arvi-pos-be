@@ -18,8 +18,14 @@ public class UserDTO {
     private Long employeeId;
     private String employeeName;
     private Boolean active;
+    private Boolean canBill;
     private Boolean canTakeOrders;
     private Boolean canManageInventory;
+    private Boolean canManageExpenses;
+    private Boolean canViewReports;
+    private Long outletId;
+    private String outletName;
+    private Long tenantId;
     private Boolean mustChangePassword;
     private LocalDateTime createdAt;
 }

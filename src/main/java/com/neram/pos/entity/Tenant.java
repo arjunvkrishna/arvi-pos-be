@@ -34,6 +34,12 @@ public class Tenant {
 
     private String address;
 
+    @Column(name = "gst_number")
+    private String gstNumber;
+
+    @Column(name = "logo_url", columnDefinition = "TEXT")
+    private String logoUrl;
+
     @Column(name = "subscription_plan", nullable = false)
     @Builder.Default
     private String subscriptionPlan = "PRO";

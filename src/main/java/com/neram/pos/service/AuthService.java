@@ -66,17 +66,23 @@ public class AuthService {
         boolean isElevated = user.getRole() == User.Role.SUPER_ADMIN ||
                              user.getRole() == User.Role.ADMIN ||
                              user.getRole() == User.Role.CAFE_ADMIN ||
+                             user.getRole() == User.Role.GENERAL_MANAGER ||
                              user.getRole() == User.Role.MANAGER;
+        boolean canBill = isElevated || Boolean.TRUE.equals(user.getCanBill());
         boolean canTakeOrders = isElevated || Boolean.TRUE.equals(user.getCanTakeOrders());
         boolean canManageInventory = isElevated || Boolean.TRUE.equals(user.getCanManageInventory());
+        boolean canManageExpenses = isElevated || Boolean.TRUE.equals(user.getCanManageExpenses());
+        boolean canViewReports = isElevated || Boolean.TRUE.equals(user.getCanViewReports());
 
         String tenantName = null;
         String tenantCode = null;
+        String logoUrl = null;
         if (user.getTenantId() != null) {
             var tenant = tenantRepository.findById(user.getTenantId()).orElse(null);
             if (tenant != null) {
                 tenantName = tenant.getName();
                 tenantCode = tenant.getCode();
+                logoUrl = tenant.getLogoUrl();
             }
         }
 
@@ -97,12 +103,16 @@ public class AuthService {
                 .role(user.getRole().name())
                 .employeeId(user.getEmployeeId())
                 .employeeName(employeeName)
+                .canBill(canBill)
                 .canTakeOrders(canTakeOrders)
                 .canManageInventory(canManageInventory)
+                .canManageExpenses(canManageExpenses)
+                .canViewReports(canViewReports)
                 .mustChangePassword(Boolean.TRUE.equals(user.getMustChangePassword()))
                 .tenantId(user.getTenantId())
                 .tenantName(tenantName)
                 .tenantCode(tenantCode)
+                .logoUrl(logoUrl)
                 .outletId(user.getOutletId())
                 .outletName(outletName)
                 .outletCode(outletCode)

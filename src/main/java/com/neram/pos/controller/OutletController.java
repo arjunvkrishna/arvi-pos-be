@@ -23,7 +23,7 @@ public class OutletController {
     }
 
     @PostMapping("/outlets")
-    @PreAuthorize("hasAnyRole('SUPER_ADMIN', 'ADMIN', 'CAFE_ADMIN')")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN', 'ADMIN', 'CAFE_ADMIN', 'GENERAL_MANAGER')")
     public ResponseEntity<?> createOutlet(@RequestBody Outlet outlet) {
         try {
             return ResponseEntity.ok(outletService.createOutlet(outlet));
@@ -33,7 +33,7 @@ public class OutletController {
     }
 
     @PutMapping("/outlets/{id}")
-    @PreAuthorize("hasAnyRole('SUPER_ADMIN', 'ADMIN', 'CAFE_ADMIN')")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN', 'ADMIN', 'CAFE_ADMIN', 'GENERAL_MANAGER', 'MANAGER')")
     public ResponseEntity<?> updateOutlet(@PathVariable Long id, @RequestBody Outlet outlet) {
         try {
             return ResponseEntity.ok(outletService.updateOutlet(id, outlet));
@@ -43,7 +43,7 @@ public class OutletController {
     }
 
     @GetMapping("/franchise/analytics")
-    @PreAuthorize("hasAnyRole('SUPER_ADMIN', 'ADMIN', 'CAFE_ADMIN', 'MANAGER')")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN', 'ADMIN', 'CAFE_ADMIN', 'GENERAL_MANAGER')")
     public ResponseEntity<Map<String, Object>> getFranchiseAnalytics() {
         return ResponseEntity.ok(outletService.getFranchiseAnalytics());
     }

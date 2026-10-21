@@ -21,24 +21,37 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final EmployeeRepository employeeRepository;
+    private final com.neram.pos.repository.TenantRepository tenantRepository;
+    private final com.neram.pos.repository.OutletRepository outletRepository;
+    private final TenantSecurityService tenantSecurityService;
     private final PasswordEncoder passwordEncoder;
     private final AuditLogService auditLogService;
     private final RefreshTokenService refreshTokenService;
 
     /**
      * Get users visible to the caller based on their role:
-     * - ADMIN: sees all users
-     * - MANAGER: sees MANAGERs and EMPLOYEEs only (not ADMINs)
-     * - EMPLOYEE: not allowed (handled at controller level)
+     * - SUPER_ADMIN: sees all users across platform
+     * - ADMIN / CAFE_ADMIN / GENERAL_MANAGER: sees all managers and staff across all outlets under current tenant
+     * - MANAGER: sees only staff belonging to their specific assigned outlet
      */
     public List<UserDTO> getUsers(String callerRole) {
+        Long tenantId = tenantSecurityService.resolveTenantId(null);
+        java.util.Optional<User> callerOpt = tenantSecurityService.getCurrentUser();
         List<User> users;
-        if ("ADMIN".equalsIgnoreCase(callerRole)) {
+
+        if ("SUPER_ADMIN".equalsIgnoreCase(callerRole)) {
             users = userRepository.findAll();
-        } else {
-            // MANAGER sees MANAGER and EMPLOYEE accounts only
+        } else if ("ADMIN".equalsIgnoreCase(callerRole) || "CAFE_ADMIN".equalsIgnoreCase(callerRole) || "GENERAL_MANAGER".equalsIgnoreCase(callerRole)) {
             users = userRepository.findAll().stream()
-                    .filter(u -> u.getRole() != User.Role.ADMIN)
+                    .filter(u -> tenantId.equals(u.getTenantId()))
+                    .filter(u -> u.getRole() != User.Role.SUPER_ADMIN && ("ADMIN".equalsIgnoreCase(callerRole) || u.getRole() != User.Role.ADMIN))
+                    .collect(Collectors.toList());
+        } else {
+            Long callerOutletId = callerOpt.map(User::getOutletId).orElse(null);
+            users = userRepository.findAll().stream()
+                    .filter(u -> tenantId.equals(u.getTenantId()))
+                    .filter(u -> callerOutletId == null || callerOutletId.equals(u.getOutletId()))
+                    .filter(u -> u.getRole() != User.Role.ADMIN && u.getRole() != User.Role.CAFE_ADMIN && u.getRole() != User.Role.GENERAL_MANAGER)
                     .collect(Collectors.toList());
         }
         return users.stream().map(this::toDTO).collect(Collectors.toList());
@@ -54,30 +67,43 @@ public class UserService {
     }
 
     /**
-     * Create a new user account.
-     * - ADMIN: can create users of any role (ADMIN, MANAGER, EMPLOYEE)
-     * - MANAGER: can only create EMPLOYEE accounts
+     * Create a new user account:
+     * - SUPER_ADMIN / ADMIN / CAFE_ADMIN: can create GENERAL_MANAGER, MANAGER, and staff across any outlet
+     * - GENERAL_MANAGER: can create branch MANAGERs and staff across any outlet under the cafe brand
+     * - MANAGER: can only create staff for their specific assigned outlet
      */
     @Transactional
     public UserDTO createUser(CreateUserRequestDTO dto, String creatorRole) {
         User.Role targetRole = User.Role.valueOf(dto.getRole().toUpperCase());
+        Long tenantId = tenantSecurityService.resolveTenantId(null);
+        java.util.Optional<User> callerOpt = tenantSecurityService.getCurrentUser();
 
-        if ("MANAGER".equalsIgnoreCase(creatorRole) && targetRole != User.Role.EMPLOYEE) {
-            throw new RuntimeException("Access denied: Managers can only create Employee accounts");
+        if ("MANAGER".equalsIgnoreCase(creatorRole)) {
+            if (targetRole == User.Role.ADMIN || targetRole == User.Role.CAFE_ADMIN || targetRole == User.Role.GENERAL_MANAGER || targetRole == User.Role.MANAGER) {
+                throw new RuntimeException("Access denied: Outlet Managers cannot create Manager or Admin accounts");
+            }
+        } else if ("GENERAL_MANAGER".equalsIgnoreCase(creatorRole)) {
+            if (targetRole == User.Role.ADMIN || targetRole == User.Role.CAFE_ADMIN || targetRole == User.Role.SUPER_ADMIN) {
+                throw new RuntimeException("Access denied: General Managers cannot create Admin accounts");
+            }
         }
 
         if (userRepository.existsByUsername(dto.getUsername())) {
             throw new RuntimeException("Username already exists: " + dto.getUsername());
         }
 
+        Long assignedOutletId = dto.getOutletId();
+        if ("MANAGER".equalsIgnoreCase(creatorRole)) {
+            assignedOutletId = callerOpt.map(User::getOutletId).orElse(assignedOutletId);
+        }
+
+        if (targetRole == User.Role.MANAGER && assignedOutletId == null) {
+            throw new IllegalArgumentException("Outlet assignment is required when creating an Outlet Branch Manager");
+        }
+
         if (dto.getEmployeeId() != null) {
             Employee emp = employeeRepository.findById(dto.getEmployeeId())
                     .orElseThrow(() -> new IllegalArgumentException("Employee not found with id: " + dto.getEmployeeId()));
-            if (!emp.getRole().name().equals(targetRole.name())) {
-                throw new IllegalArgumentException(String.format(
-                        "Role mismatch: Cannot link user account with role %s to employee '%s' with role %s",
-                        targetRole, emp.getName(), emp.getRole()));
-            }
             userRepository.findByEmployeeId(dto.getEmployeeId()).ifPresent(existing -> {
                 throw new IllegalArgumentException(String.format(
                         "Employee '%s' is already linked to user account '%s'",
@@ -95,14 +121,19 @@ public class UserService {
         user.setPasswordHash(passwordEncoder.encode(dto.getPassword()));
         user.setRole(targetRole);
         user.setEmployeeId(dto.getEmployeeId());
+        user.setTenantId(tenantId);
+        user.setOutletId(assignedOutletId);
 
-        if (targetRole == User.Role.ADMIN || targetRole == User.Role.MANAGER) {
-            user.setCanTakeOrders(true);
-            user.setCanManageInventory(true);
-        } else {
-            user.setCanTakeOrders(dto.getCanTakeOrders() != null ? dto.getCanTakeOrders() : true);
-            user.setCanManageInventory(dto.getCanManageInventory() != null ? dto.getCanManageInventory() : false);
-        }
+        boolean isElevated = targetRole == User.Role.ADMIN || 
+                             targetRole == User.Role.CAFE_ADMIN || 
+                             targetRole == User.Role.GENERAL_MANAGER || 
+                             targetRole == User.Role.MANAGER;
+
+        user.setCanBill(isElevated || Boolean.TRUE.equals(dto.getCanBill()) || targetRole == User.Role.CASHIER);
+        user.setCanTakeOrders(isElevated || Boolean.TRUE.equals(dto.getCanTakeOrders()) || targetRole == User.Role.CAPTAIN || targetRole == User.Role.CASHIER);
+        user.setCanManageInventory(isElevated || Boolean.TRUE.equals(dto.getCanManageInventory()));
+        user.setCanManageExpenses(isElevated || Boolean.TRUE.equals(dto.getCanManageExpenses()));
+        user.setCanViewReports(isElevated || Boolean.TRUE.equals(dto.getCanViewReports()));
 
         user.setMustChangePassword(true);
         user.setActive(true);
@@ -111,7 +142,7 @@ public class UserService {
 
         User saved = userRepository.save(user);
         auditLogService.log("CREATE", "USER", saved.getId(), null,
-                "Created user: " + saved.getUsername() + " with role " + saved.getRole());
+                "Created user: " + saved.getUsername() + " with role " + saved.getRole() + " for outlet " + saved.getOutletId());
         return toDTO(saved);
     }
 
@@ -207,31 +238,33 @@ public class UserService {
     }
 
     /**
-     * Update feature permissions for a user.
-     * - ADMIN: can update permissions for any user (MANAGER, EMPLOYEE)
-     * - MANAGER: can update permissions for EMPLOYEE users only
+     * Update feature permissions for a user:
+     * - SUPER_ADMIN / ADMIN / CAFE_ADMIN / GENERAL_MANAGER: can update permissions for branch managers and staff
+     * - MANAGER: can update permissions for staff in their outlet only
      */
     @Transactional
     public UserDTO updateUserPermissions(Long id, com.neram.pos.dto.UpdateUserPermissionsRequestDTO dto, String callerRole) {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("User not found with id: " + id));
 
-        if ("MANAGER".equalsIgnoreCase(callerRole) && user.getRole() != User.Role.EMPLOYEE) {
-            throw new RuntimeException("Access denied: Managers can only manage permissions for Employee accounts");
+        if ("MANAGER".equalsIgnoreCase(callerRole) && user.getRole() != User.Role.EMPLOYEE && user.getRole() != User.Role.CASHIER && user.getRole() != User.Role.CAPTAIN && user.getRole() != User.Role.KITCHEN) {
+            throw new RuntimeException("Access denied: Outlet Managers can only manage permissions for staff accounts");
         }
 
-        if (dto.getCanTakeOrders() != null) {
-            user.setCanTakeOrders(dto.getCanTakeOrders());
-        }
-        if (dto.getCanManageInventory() != null) {
-            user.setCanManageInventory(dto.getCanManageInventory());
-        }
+        if (dto.getCanBill() != null) user.setCanBill(dto.getCanBill());
+        if (dto.getCanTakeOrders() != null) user.setCanTakeOrders(dto.getCanTakeOrders());
+        if (dto.getCanManageInventory() != null) user.setCanManageInventory(dto.getCanManageInventory());
+        if (dto.getCanManageExpenses() != null) user.setCanManageExpenses(dto.getCanManageExpenses());
+        if (dto.getCanViewReports() != null) user.setCanViewReports(dto.getCanViewReports());
+        if (dto.getOutletId() != null) user.setOutletId(dto.getOutletId());
+
         user.setUpdatedAt(LocalDateTime.now());
         User saved = userRepository.save(user);
 
         auditLogService.log("UPDATE", "USER", id, null,
-                "Updated permissions for " + user.getUsername() + ": canTakeOrders=" + user.getCanTakeOrders() +
-                ", canManageInventory=" + user.getCanManageInventory());
+                "Updated permissions for " + user.getUsername() + ": canBill=" + user.getCanBill() +
+                ", canTakeOrders=" + user.getCanTakeOrders() + ", canManageInventory=" + user.getCanManageInventory() +
+                ", canManageExpenses=" + user.getCanManageExpenses() + ", canViewReports=" + user.getCanViewReports());
         return toDTO(saved);
     }
 
@@ -273,13 +306,35 @@ public class UserService {
             emp = employeeRepository.findById(user.getEmployeeId()).orElse(null);
         }
 
-        boolean canTakeOrders = user.getRole() == User.Role.ADMIN ||
-                user.getRole() == User.Role.MANAGER ||
-                Boolean.TRUE.equals(user.getCanTakeOrders());
+        boolean isElevated = user.getRole() == User.Role.SUPER_ADMIN ||
+                             user.getRole() == User.Role.ADMIN ||
+                             user.getRole() == User.Role.CAFE_ADMIN ||
+                             user.getRole() == User.Role.GENERAL_MANAGER ||
+                             user.getRole() == User.Role.MANAGER;
 
-        boolean canManageInventory = user.getRole() == User.Role.ADMIN ||
-                user.getRole() == User.Role.MANAGER ||
-                Boolean.TRUE.equals(user.getCanManageInventory());
+        boolean canBill = isElevated || Boolean.TRUE.equals(user.getCanBill());
+        boolean canTakeOrders = isElevated || Boolean.TRUE.equals(user.getCanTakeOrders());
+        boolean canManageInventory = isElevated || Boolean.TRUE.equals(user.getCanManageInventory());
+        boolean canManageExpenses = isElevated || Boolean.TRUE.equals(user.getCanManageExpenses());
+        boolean canViewReports = isElevated || Boolean.TRUE.equals(user.getCanViewReports());
+
+        String tenantName = null;
+        String logoUrl = null;
+        if (user.getTenantId() != null) {
+            var tenant = tenantRepository.findById(user.getTenantId()).orElse(null);
+            if (tenant != null) {
+                tenantName = tenant.getName();
+                logoUrl = tenant.getLogoUrl();
+            }
+        }
+
+        String outletName = null;
+        if (user.getOutletId() != null) {
+            var outlet = outletRepository.findById(user.getOutletId()).orElse(null);
+            if (outlet != null) {
+                outletName = outlet.getName();
+            }
+        }
 
         return com.neram.pos.dto.UserProfileDTO.builder()
                 .userId(user.getId())
@@ -287,8 +342,16 @@ public class UserService {
                 .role(user.getRole().name())
                 .active(user.getActive())
                 .mustChangePassword(Boolean.TRUE.equals(user.getMustChangePassword()))
+                .canBill(canBill)
                 .canTakeOrders(canTakeOrders)
                 .canManageInventory(canManageInventory)
+                .canManageExpenses(canManageExpenses)
+                .canViewReports(canViewReports)
+                .tenantId(user.getTenantId())
+                .tenantName(tenantName)
+                .outletId(user.getOutletId())
+                .outletName(outletName)
+                .cafeLogoUrl(logoUrl)
                 .accountCreatedAt(user.getCreatedAt())
                 .employeeId(emp != null ? emp.getId() : null)
                 .employeeName(emp != null ? emp.getName() : user.getUsername())
@@ -310,6 +373,49 @@ public class UserService {
                 .build();
     }
 
+    /**
+     * Update profile details for the currently logged-in user:
+     * Full Name, Phone, Email, and Address.
+     */
+    @Transactional
+    public com.neram.pos.dto.UserProfileDTO updateMyProfile(String username, com.neram.pos.dto.UpdateProfileRequestDTO dto) {
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("User not found with username: " + username));
+
+        Employee emp = null;
+        if (user.getEmployeeId() != null) {
+            emp = employeeRepository.findById(user.getEmployeeId()).orElse(null);
+        }
+        if (emp == null) {
+            emp = new Employee();
+            emp.setName(dto.getName() != null && !dto.getName().isBlank() ? dto.getName().trim() : user.getUsername());
+            emp.setRole(Employee.Role.valueOf(user.getRole().name().equals("SUPER_ADMIN") ? "ADMIN" : user.getRole().name()));
+            emp.setTenantId(user.getTenantId());
+            emp.setOutletId(user.getOutletId());
+            emp = employeeRepository.save(emp);
+            user.setEmployeeId(emp.getId());
+            userRepository.save(user);
+        }
+
+        if (dto.getName() != null && !dto.getName().isBlank()) {
+            emp.setName(dto.getName().trim());
+        }
+        if (dto.getPhone() != null) {
+            emp.setPhone(dto.getPhone().trim());
+        }
+        if (dto.getEmail() != null) {
+            emp.setEmail(dto.getEmail().trim());
+        }
+        if (dto.getAddress() != null) {
+            emp.setAddress(dto.getAddress().trim());
+        }
+        emp.setUpdatedAt(LocalDateTime.now());
+        employeeRepository.save(emp);
+
+        auditLogService.log("UPDATE", "USER_PROFILE", user.getId(), null, "User updated profile: " + username);
+        return getMyProfile(username);
+    }
+
     private UserDTO toDTO(User u) {
         String employeeName = u.getUsername();
         if (u.getEmployeeId() != null) {
@@ -317,13 +423,23 @@ public class UserService {
             if (emp != null) employeeName = emp.getName();
         }
 
-        boolean canTakeOrders = u.getRole() == User.Role.ADMIN ||
-                                u.getRole() == User.Role.MANAGER ||
-                                Boolean.TRUE.equals(u.getCanTakeOrders());
+        boolean isElevated = u.getRole() == User.Role.SUPER_ADMIN ||
+                             u.getRole() == User.Role.ADMIN ||
+                             u.getRole() == User.Role.CAFE_ADMIN ||
+                             u.getRole() == User.Role.GENERAL_MANAGER ||
+                             u.getRole() == User.Role.MANAGER;
 
-        boolean canManageInventory = u.getRole() == User.Role.ADMIN ||
-                                     u.getRole() == User.Role.MANAGER ||
-                                     Boolean.TRUE.equals(u.getCanManageInventory());
+        boolean canBill = isElevated || Boolean.TRUE.equals(u.getCanBill());
+        boolean canTakeOrders = isElevated || Boolean.TRUE.equals(u.getCanTakeOrders());
+        boolean canManageInventory = isElevated || Boolean.TRUE.equals(u.getCanManageInventory());
+        boolean canManageExpenses = isElevated || Boolean.TRUE.equals(u.getCanManageExpenses());
+        boolean canViewReports = isElevated || Boolean.TRUE.equals(u.getCanViewReports());
+
+        String outletName = null;
+        if (u.getOutletId() != null) {
+            var outlet = outletRepository.findById(u.getOutletId()).orElse(null);
+            if (outlet != null) outletName = outlet.getName();
+        }
 
         return UserDTO.builder()
                 .id(u.getId())
@@ -332,8 +448,14 @@ public class UserService {
                 .employeeId(u.getEmployeeId())
                 .employeeName(employeeName)
                 .active(u.getActive())
+                .canBill(canBill)
                 .canTakeOrders(canTakeOrders)
                 .canManageInventory(canManageInventory)
+                .canManageExpenses(canManageExpenses)
+                .canViewReports(canViewReports)
+                .outletId(u.getOutletId())
+                .outletName(outletName)
+                .tenantId(u.getTenantId())
                 .mustChangePassword(Boolean.TRUE.equals(u.getMustChangePassword()))
                 .createdAt(u.getCreatedAt())
                 .build();

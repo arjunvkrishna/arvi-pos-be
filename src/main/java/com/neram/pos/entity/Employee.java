@@ -80,6 +80,6 @@ public class Employee {
     private LocalDateTime updatedAt = LocalDateTime.now();
 
     public enum Role {
-        ADMIN, MANAGER, EMPLOYEE, KITCHEN
+        ADMIN, GENERAL_MANAGER, MANAGER, CASHIER, CAPTAIN, EMPLOYEE, KITCHEN
     }
 }

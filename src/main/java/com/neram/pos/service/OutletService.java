@@ -25,6 +25,15 @@ public class OutletService {
 
     public List<Outlet> getOutletsForCurrentTenant() {
         Long tenantId = tenantSecurityService.resolveTenantId(null);
+        java.util.Optional<com.neram.pos.entity.User> callerOpt = tenantSecurityService.getCurrentUser();
+        if (callerOpt.isPresent()) {
+            com.neram.pos.entity.User caller = callerOpt.get();
+            if (caller.getRole() == com.neram.pos.entity.User.Role.MANAGER && caller.getOutletId() != null) {
+                return outletRepository.findById(caller.getOutletId())
+                        .map(List::of)
+                        .orElse(Collections.emptyList());
+            }
+        }
         return outletRepository.findByTenantId(tenantId);
     }
 

@@ -37,11 +37,20 @@ public class User {
     @Column(name = "outlet_id")
     private Long outletId;
 
+    @Column(name = "can_bill", nullable = false)
+    private Boolean canBill = true;
+
     @Column(name = "can_take_orders", nullable = false)
     private Boolean canTakeOrders = true;
 
     @Column(name = "can_manage_inventory", nullable = false)
     private Boolean canManageInventory = false;
+
+    @Column(name = "can_manage_expenses", nullable = false)
+    private Boolean canManageExpenses = false;
+
+    @Column(name = "can_view_reports", nullable = false)
+    private Boolean canViewReports = false;
 
     @Column(name = "must_change_password", nullable = false)
     private Boolean mustChangePassword = false;
@@ -56,6 +65,6 @@ public class User {
     private LocalDateTime updatedAt = LocalDateTime.now();
 
     public enum Role {
-        SUPER_ADMIN, ADMIN, CAFE_ADMIN, MANAGER, EMPLOYEE, KITCHEN
+        SUPER_ADMIN, ADMIN, CAFE_ADMIN, GENERAL_MANAGER, MANAGER, CASHIER, CAPTAIN, EMPLOYEE, KITCHEN
     }
 }

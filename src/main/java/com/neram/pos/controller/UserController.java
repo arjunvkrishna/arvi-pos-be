@@ -33,11 +33,21 @@ public class UserController {
     }
 
     /**
-     * PATCH /api/users/me/change-password
-     * Available to ANY authenticated user (Admin, Manager, Employee).
+     * PUT /api/users/me
+     * Allows any authenticated user to update their personal details (name, phone, email, address).
+     */
+    @PutMapping("/me")
+    public ResponseEntity<com.neram.pos.dto.UserProfileDTO> updateMyProfile(@RequestBody com.neram.pos.dto.UpdateProfileRequestDTO body, Authentication auth) {
+        String username = auth.getName();
+        return ResponseEntity.ok(userService.updateMyProfile(username, body));
+    }
+
+    /**
+     * PATCH /api/users/me/change-password or POST /api/users/me/change-password
+     * Available to ANY authenticated user.
      * Body: { "currentPassword": "...", "newPassword": "..." }
      */
-    @PatchMapping("/me/change-password")
+    @RequestMapping(value = "/me/change-password", method = {RequestMethod.PATCH, RequestMethod.POST})
     public ResponseEntity<?> changeOwnPassword(@RequestBody Map<String, String> body, Authentication auth) {
         String username = auth.getName();
         String currentPassword = body.get("currentPassword");
@@ -59,11 +69,11 @@ public class UserController {
 
     /**
      * GET /api/users
-     * Admin: all users
-     * Manager: managers + employees (not admins)
+     * Admin & General Manager: all users in brand
+     * Outlet Manager: staff in their assigned outlet only
      */
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAFE_ADMIN', 'GENERAL_MANAGER', 'MANAGER')")
     public ResponseEntity<List<UserDTO>> getUsers(Authentication auth) {
         String callerRole = getRole(auth);
         return ResponseEntity.ok(userService.getUsers(callerRole));
@@ -73,7 +83,7 @@ public class UserController {
      * GET /api/users/{id}
      */
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAFE_ADMIN', 'GENERAL_MANAGER', 'MANAGER')")
     public ResponseEntity<UserDTO> getUserById(@PathVariable Long id, Authentication auth) {
         String callerRole = getRole(auth);
         return ResponseEntity.ok(userService.getUserById(id, callerRole));
@@ -85,7 +95,7 @@ public class UserController {
      * Manager: can only create EMPLOYEE role
      */
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAFE_ADMIN', 'GENERAL_MANAGER', 'MANAGER')")
     public ResponseEntity<?> createUser(@RequestBody CreateUserRequestDTO dto, Authentication auth) {
         String callerRole = getRole(auth);
         try {
@@ -100,7 +110,7 @@ public class UserController {
      * Body: { "newPassword": "..." }
      */
     @PatchMapping("/{id}/reset-password")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAFE_ADMIN', 'GENERAL_MANAGER', 'MANAGER')")
     public ResponseEntity<?> resetPassword(@PathVariable Long id, @RequestBody Map<String, String> body, Authentication auth) {
         String callerRole = getRole(auth);
         String newPassword = body.get("newPassword");
@@ -119,7 +129,7 @@ public class UserController {
      * Toggle user active/inactive
      */
     @PatchMapping("/{id}/toggle-active")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAFE_ADMIN', 'GENERAL_MANAGER', 'MANAGER')")
     public ResponseEntity<?> toggleActive(@PathVariable Long id, Authentication auth) {
         String callerRole = getRole(auth);
         try {
@@ -131,15 +141,13 @@ public class UserController {
 
     /**
      * PATCH /api/users/{id}/permissions
-     * Body: { "canTakeOrders": true, "canManageInventory": false }
-     * Admin: can update for any user
-     * Manager: can update for Employee accounts only
+     * Body: { "canBill": true, "canTakeOrders": true, "canManageInventory": false, "canManageExpenses": false, "canViewReports": false }
      */
     @PatchMapping("/{id}/permissions")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAFE_ADMIN', 'GENERAL_MANAGER', 'MANAGER')")
     public ResponseEntity<?> updatePermissions(@PathVariable Long id,
-                                               @RequestBody com.neram.pos.dto.UpdateUserPermissionsRequestDTO body,
-                                               Authentication auth) {
+                                                @RequestBody com.neram.pos.dto.UpdateUserPermissionsRequestDTO body,
+                                                Authentication auth) {
         String callerRole = getRole(auth);
         try {
             return ResponseEntity.ok(userService.updateUserPermissions(id, body, callerRole));
@@ -150,10 +158,10 @@ public class UserController {
 
     /**
      * DELETE /api/users/{id}
-     * Only ADMIN can delete users
+     * Admin & General Manager can delete staff
      */
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAFE_ADMIN', 'GENERAL_MANAGER')")
     public ResponseEntity<?> deleteUser(@PathVariable Long id, Authentication auth) {
         try {
             userService.deleteUser(id, auth != null ? auth.getName() : null);

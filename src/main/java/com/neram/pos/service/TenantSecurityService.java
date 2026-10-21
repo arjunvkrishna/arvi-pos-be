@@ -35,6 +35,15 @@ public class TenantSecurityService {
                 .orElse(false);
     }
 
+    public boolean isElevatedManager() {
+        return getCurrentUser()
+                .map(u -> u.getRole() == User.Role.SUPER_ADMIN ||
+                          u.getRole() == User.Role.ADMIN ||
+                          u.getRole() == User.Role.CAFE_ADMIN ||
+                          u.getRole() == User.Role.GENERAL_MANAGER)
+                .orElse(false);
+    }
+
     public Long resolveTenantId(Long requestedTenantId) {
         Optional<User> userOpt = getCurrentUser();
         if (userOpt.isEmpty()) {
@@ -53,7 +62,10 @@ public class TenantSecurityService {
             return requestedOutletId != null ? requestedOutletId : 1L;
         }
         User user = userOpt.get();
-        if (user.getRole() == User.Role.SUPER_ADMIN || user.getRole() == User.Role.ADMIN || user.getRole() == User.Role.CAFE_ADMIN) {
+        if (user.getRole() == User.Role.SUPER_ADMIN ||
+            user.getRole() == User.Role.ADMIN ||
+            user.getRole() == User.Role.CAFE_ADMIN ||
+            user.getRole() == User.Role.GENERAL_MANAGER) {
             return requestedOutletId != null ? requestedOutletId : (user.getOutletId() != null ? user.getOutletId() : 1L);
         }
         return user.getOutletId() != null ? user.getOutletId() : 1L;

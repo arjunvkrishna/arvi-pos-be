@@ -10,8 +10,12 @@ import lombok.NoArgsConstructor;
 public class CreateUserRequestDTO {
     private String username;
     private String password;
-    private String role; // ADMIN, MANAGER, EMPLOYEE
+    private String role; // ADMIN, GENERAL_MANAGER, MANAGER, CASHIER, CAPTAIN, EMPLOYEE, KITCHEN
     private Long employeeId; // Optional: link to an existing employee
+    private Long outletId; // Specific branch outlet assignment
+    private Boolean canBill;
     private Boolean canTakeOrders;
     private Boolean canManageInventory;
+    private Boolean canManageExpenses;
+    private Boolean canViewReports;
 }

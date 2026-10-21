@@ -18,10 +18,25 @@ Designed with enterprise multi-unit restaurant capabilities inspired by Petpooja
   - Centralized menu, pricing, and category management across outlets.
   - Multi-location franchise branch creation and configuration (`POST /api/outlets`).
   - Comparative franchise branch performance and sales analytics (`GET /api/franchise/analytics`).
-- **Store / Branch Manager (`ROLE_MANAGER`)**:
-  - Store-scoped operations: employee scheduling, cash register opening/closing, table floor plan layout, daily expenses, and local stock audits.
-- **Cashier & Kitchen Staff (`ROLE_EMPLOYEE`, `ROLE_KITCHEN`)**:
-  - High-speed order creation, bill splitting, and live Kitchen Order Ticket (KOT) status tracking.
+  - Cafe brand settings and digital logo customization (`GET/PUT /api/tenant/settings`).
+- **Multi-Franchise General Manager (`ROLE_GENERAL_MANAGER`)**:
+  - Positioned directly under Admin as the multi-outlet operational head.
+  - Cross-franchise governance: manages branch managers across different outlets, oversees combined franchise inventory, expense audits, and consolidated P&L reports.
+  - Ability to seamlessly switch active outlet context or inspect global franchise data.
+- **Single-Outlet Branch Manager (`ROLE_MANAGER`)**:
+  - Assigned strictly to a single physical outlet (`outletId`).
+  - Scoped exclusively to that branch: manage local outlet staff, register shifts, local stock audits, and branch expense logs without visibility into other franchises.
+- **Granular RBAC Staff Permissions (`CASHIER`, `CAPTAIN`, `EMPLOYEE`, `KITCHEN`)**:
+  - Dedicated capability checkboxes for fine-grained staff delegation:
+    - `canBill`: POS billing, invoice generation, cashier shift management.
+    - `canTakeOrders`: Floor captain mode, table assignments, and KOT dispatching.
+    - `canManageInventory`: Raw ingredient tracking and inward purchase invoices.
+    - `canManageExpenses`: Daily expense vouchers and Petpooja-style petty cash logging.
+    - `canViewReports`: Financial reports, revenue dashboards, and P&L analytics.
+- **User Profile & Self-Service Password Reset (`/api/users/me`)**:
+  - Self-service personal profile management (Full Name, Phone, Email, Address).
+  - Secure in-app password reset with existing password verification and length validation (`POST /api/users/me/change-password`).
+  - Admin/GM staff password reset capability (`POST /api/users/{id}/reset-password`).
 
 ### 2. POS & Restaurant Operations
 - **Order Management & Billing**:
