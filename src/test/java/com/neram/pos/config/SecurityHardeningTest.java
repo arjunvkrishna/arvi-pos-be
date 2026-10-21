@@ -89,7 +89,7 @@ class SecurityHardeningTest {
     @DisplayName("Exceptions without a message no longer crash the error handler")
     void nullMessageHandled() {
         GlobalExceptionHandler h = new GlobalExceptionHandler();
-        ResponseEntity<Map<String, String>> r = h.handleRuntimeException(new NullPointerException());
+        ResponseEntity<Map<String, Object>> r = h.handleRuntimeException(new NullPointerException());
         assertEquals(400, r.getStatusCode().value());
         assertNotNull(r.getBody().get("error"));
         assertNotNull(h.handleIllegalArgument(new IllegalArgumentException()).getBody().get("error"));
@@ -101,14 +101,14 @@ class SecurityHardeningTest {
         GlobalExceptionHandler h = new GlobalExceptionHandler();
         String leaky = "could not execute statement [ERROR: duplicate key value violates unique constraint \"categories_name_key\"] [insert into categories]";
         ConstraintViolationException cve = new ConstraintViolationException(leaky, new SQLException("dup", "23505"), "categories_name_key");
-        ResponseEntity<Map<String, String>> r = h.handleDataIntegrity(new DataIntegrityViolationException(leaky, cve));
+        ResponseEntity<Map<String, Object>> r = h.handleDataIntegrity(new DataIntegrityViolationException(leaky, cve));
         assertEquals(400, r.getStatusCode().value());
-        String msg = r.getBody().get("error");
+        String msg = (String) r.getBody().get("error");
         assertFalse(msg.toLowerCase().contains("insert") || msg.contains("categories") || msg.contains("constraint"), msg);
         assertTrue(msg.contains("already exists"));
 
         ConstraintViolationException nn = new ConstraintViolationException("x", new SQLException("nn", "23502"), "c");
-        assertTrue(h.handleDataIntegrity(new DataIntegrityViolationException("x", nn)).getBody().get("error").contains("required"));
+        assertTrue(h.handleDataIntegrity(new DataIntegrityViolationException("x", nn)).getBody().get("error").toString().contains("required"));
         assertNotNull(h.handleDataIntegrity(new DataIntegrityViolationException("no cause")).getBody().get("error"));
     }
 }

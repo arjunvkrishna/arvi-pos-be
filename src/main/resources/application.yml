@@ -81,7 +81,16 @@ neram:
     webhook-secret: ${TELEGRAM_WEBHOOK_SECRET:}
 
 logging:
+  file:
+    path: ${LOG_PATH:logs}
+  logback:
+    rollingpolicy:
+      max-file-size: ${LOG_FILE_MAX_SIZE:10MB}
+      max-history: ${LOG_FILE_MAX_HISTORY:30}
+      total-size-cap: ${LOG_FILE_TOTAL_SIZE_CAP:1GB}
   level:
-    com.neram: INFO
+    root: ${LOG_LEVEL_ROOT:INFO}
+    com.neram: ${LOG_LEVEL_APP:INFO}
     org.springframework.security: WARN
     org.flywaydb: INFO
+    org.hibernate.SQL: ${LOG_LEVEL_SQL:WARN}
