@@ -14,6 +14,7 @@ import java.time.LocalDateTime;
 @Builder
 @Entity
 @Table(name = "inventory_transactions")
+@org.hibernate.annotations.Filter(name = "outletScope", condition = "(item_id IN (SELECT p.id FROM inventory_items p WHERE p.outlet_id = :outletId OR p.outlet_id IS NULL))")
 public class InventoryTransaction {
 
     @Id
@@ -88,6 +89,10 @@ public class InventoryTransaction {
 
     @Column(columnDefinition = "TEXT")
     private String notes;
+
+    /** Why stock was issued: USAGE, EXPIRED, SPOILED, BREAKAGE, STAFF_MEAL or OTHER (empty on older rows). */
+    @Column(name = "reason_type", length = 20)
+    private String reasonType;
 
     @Column(name = "created_at")
     @Builder.Default

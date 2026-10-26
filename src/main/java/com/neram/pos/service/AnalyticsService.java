@@ -40,6 +40,7 @@ public class AnalyticsService {
     private final InventoryTransactionRepository inventoryTransactionRepository;
     private final CashMovementRepository cashMovementRepository;
     private final CashierShiftRepository cashierShiftRepository;
+    private final BillPaymentRepository billPaymentRepository;
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
@@ -82,10 +83,11 @@ public class AnalyticsService {
         return stats;
     }
 
-    /**
-     * Comprehensive Analytics for Centralized Management View
-     */
-    public ComprehensiveAnalyticsDTO getComprehensiveAnalytics(String periodParam, LocalDate customStart, LocalDate customEnd) {
+    /** The report period (name, dates and the previous period of equal length) for a period name or custom dates. */
+    private record PeriodRange(String period, LocalDate start, LocalDate end, LocalDate prevStart, LocalDate prevEnd) {
+    }
+
+    private PeriodRange resolvePeriod(String periodParam, LocalDate customStart, LocalDate customEnd) {
         String period = (periodParam != null && !periodParam.isBlank()) ? periodParam.toUpperCase() : "THIS_MONTH";
         LocalDate today = LocalDate.now();
 
@@ -160,6 +162,19 @@ public class AnalyticsService {
                 prevEndDate = today.minusMonths(1).withDayOfMonth(dayOfMonth);
                 break;
         }
+        return new PeriodRange(period, startDate, endDate, prevStartDate, prevEndDate);
+    }
+
+    /**
+     * Comprehensive Analytics for Centralized Management View
+     */
+    public ComprehensiveAnalyticsDTO getComprehensiveAnalytics(String periodParam, LocalDate customStart, LocalDate customEnd) {
+        PeriodRange range = resolvePeriod(periodParam, customStart, customEnd);
+        String period = range.period();
+        LocalDate startDate = range.start();
+        LocalDate endDate = range.end();
+        LocalDate prevStartDate = range.prevStart();
+        LocalDate prevEndDate = range.prevEnd();
 
         LocalDateTime startDateTime = startDate.atStartOfDay();
         LocalDateTime endDateTime = endDate.atTime(LocalTime.MAX);
@@ -481,7 +496,7 @@ public class AnalyticsService {
                 .tableNumber(b.getTableNumber())
                 .customerName(b.getCustomerName())
                 .netAmount(b.getNetAmount() != null ? b.getNetAmount().doubleValue() : 0.0)
-                .paymentMode(b.getPaymentMode() != null ? b.getPaymentMode().name() : "CASH")
+                .paymentMode(b.getPaymentSummary() != null ? b.getPaymentSummary() : (b.getPaymentMode() != null ? b.getPaymentMode().name() : "CASH"))
                 .createdAt(b.getCreatedAt() != null ? b.getCreatedAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")) : "")
                 .build()).collect(Collectors.toList());
 
@@ -582,6 +597,106 @@ public class AnalyticsService {
                         .build())
                 .drillDown(drillDown)
                 .build();
+    }
+
+    /**
+     * One page of a report table for a period, newest first. sections: sales (paid bills), expenses, purchases (supplier
+     * invoices), supplierPayments, salaries (paid payroll), supplierSpending and purchasedProducts (the two ranked summaries).
+     * The first five are paged in the database; the two summaries are computed lists that are sliced.
+     */
+    public org.springframework.data.domain.Page<?> getDrillDownPage(String section, String periodParam, LocalDate customStart, LocalDate customEnd,
+                                                                   org.springframework.data.domain.Pageable pageable) {
+        PeriodRange range = resolvePeriod(periodParam, customStart, customEnd);
+        LocalDate start = range.start();
+        LocalDate end = range.end();
+        LocalDateTime startTime = start.atStartOfDay();
+        LocalDateTime endTime = end.atTime(LocalTime.MAX);
+        // The queries sort themselves; only the request's page and size are used.
+        org.springframework.data.domain.Pageable plain = (pageable == null || pageable.isUnpaged()) ? org.springframework.data.domain.Pageable.unpaged()
+                : org.springframework.data.domain.PageRequest.of(pageable.getPageNumber(), pageable.getPageSize());
+        String s = section == null ? "" : section.trim();
+
+        switch (s) {
+            case "sales":
+                return billRepository.findByCreatedAtBetweenAndStatusOrderByCreatedAtDescIdDesc(startTime, endTime, Bill.Status.PAID, plain)
+                        .map(b -> BillRecord.builder()
+                                .id(b.getId())
+                                .billNumber(b.getBillNumber())
+                                .tableNumber(b.getTableNumber())
+                                .customerName(b.getCustomerName())
+                                .netAmount(b.getNetAmount() != null ? b.getNetAmount().doubleValue() : 0.0)
+                                .paymentMode(b.getPaymentMode() != null ? b.getPaymentMode().name() : "CASH")
+                                .createdAt(b.getCreatedAt() != null ? b.getCreatedAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")) : "")
+                                .build());
+            case "expenses":
+                return cafeExpenseRepository.findByExpenseDateBetweenOrderByExpenseDateDescIdDesc(start, end, plain)
+                        .map(e -> ExpenseRecord.builder()
+                                .id(e.getId())
+                                .type(e.getType() != null ? e.getType().name() : "MISC")
+                                .description(e.getDescription())
+                                .amount(e.getAmount() != null ? e.getAmount().doubleValue() : 0.0)
+                                .expenseDate(e.getExpenseDate() != null ? e.getExpenseDate().toString() : "")
+                                .paidBy(e.getPaidBy())
+                                .receiptRef(e.getReceiptRef())
+                                .build());
+            case "purchases": {
+                Map<Long, String> supplierNames = supplierNameMap();
+                return supplierInvoiceRepository.findByInvoiceDateBetweenOrderByInvoiceDateDescIdDesc(start, end, plain)
+                        .map(i -> SupplierInvoiceRecord.builder()
+                                .id(i.getId())
+                                .invoiceNumber(i.getInvoiceNumber())
+                                .supplierName(supplierNames.getOrDefault(i.getSupplierId(), "Supplier #" + i.getSupplierId()))
+                                .invoiceDate(i.getInvoiceDate() != null ? i.getInvoiceDate().toString() : "")
+                                .subtotal(i.getSubtotal() != null ? i.getSubtotal().doubleValue() : 0.0)
+                                .gstAmount(i.getGstAmount() != null ? i.getGstAmount().doubleValue() : 0.0)
+                                .totalAmount(i.getTotalAmount() != null ? i.getTotalAmount().doubleValue() : 0.0)
+                                .status(i.getStatus() != null ? i.getStatus().name() : "UNPAID")
+                                .build());
+            }
+            case "supplierPayments": {
+                Map<Long, String> supplierNames = supplierNameMap();
+                return supplierPaymentRepository.findByPaymentDateBetweenOrderByPaymentDateDescIdDesc(start, end, plain)
+                        .map(sp -> SupplierPaymentRecord.builder()
+                                .id(sp.getId())
+                                .paymentDate(sp.getPaymentDate() != null ? sp.getPaymentDate().toString() : "")
+                                .supplierId(sp.getSupplierId())
+                                .supplierName(supplierNames.getOrDefault(sp.getSupplierId(), "Supplier #" + sp.getSupplierId()))
+                                .invoiceId(sp.getInvoiceId())
+                                .invoiceNumber(sp.getInvoiceId() != null
+                                        ? supplierInvoiceRepository.findById(sp.getInvoiceId()).map(SupplierInvoice::getInvoiceNumber).orElse("INV-" + sp.getInvoiceId())
+                                        : "-")
+                                .amount(sp.getAmount() != null ? sp.getAmount().doubleValue() : 0.0)
+                                .paymentMode(sp.getPaymentMode() != null ? sp.getPaymentMode().name() : "CASH")
+                                .referenceNumber(sp.getReferenceNumber())
+                                .notes(sp.getNotes())
+                                .build());
+            }
+            case "salaries": {
+                Map<Long, String> employeeNames = employeeRepository.findAll().stream()
+                        .collect(Collectors.toMap(Employee::getId, Employee::getName, (a, b) -> a));
+                return salaryRepository.findByPaidTrueAndPaidDateBetweenOrderByPaidDateDescIdDesc(start, end, plain)
+                        .map(sal -> SalaryRecord.builder()
+                                .id(sal.getId())
+                                .employeeName(employeeNames.getOrDefault(sal.getEmployeeId(), "Staff #" + sal.getEmployeeId()))
+                                .month(sal.getMonth())
+                                .year(sal.getYear())
+                                .netSalary(sal.getNetSalary() != null ? sal.getNetSalary().doubleValue() : 0.0)
+                                .paymentDate(sal.getPaidDate() != null ? sal.getPaidDate().toString() : "")
+                                .paymentMode(sal.getPaymentMode())
+                                .status(sal.getPaid() != null && sal.getPaid() ? "PAID" : "PENDING")
+                                .build());
+            }
+            case "supplierSpending":
+                return com.neram.pos.util.PagedResponse.slice(getComprehensiveAnalytics(periodParam, customStart, customEnd).getSupplierSpending(), plain);
+            case "purchasedProducts":
+                return com.neram.pos.util.PagedResponse.slice(getComprehensiveAnalytics(periodParam, customStart, customEnd).getTopPurchasedProducts(), plain);
+            default:
+                throw new IllegalArgumentException("Unknown report section: " + section);
+        }
+    }
+
+    private Map<Long, String> supplierNameMap() {
+        return supplierRepository.findAll().stream().collect(Collectors.toMap(Supplier::getId, Supplier::getName, (a, b) -> a));
     }
 
     private InventoryItemSummary toItemSummary(InventoryItem item) {
@@ -686,9 +801,12 @@ public class AnalyticsService {
                 : BigDecimal.ZERO;
 
         // 7. Cash Flow Summary (Money Received - Money Paid)
+        Map<Long, BigDecimal> cashPartOfSplit = new HashMap<>();
+        List<Long> splitIds = paidBills.stream().filter(b -> b.getPaymentSummary() != null).map(Bill::getId).collect(Collectors.toList());
+        if (!splitIds.isEmpty()) for (BillPayment p : billPaymentRepository.findByBillIdIn(splitIds)) if ("CASH".equals(p.getMode())) cashPartOfSplit.merge(p.getBillId(), p.getAmount(), BigDecimal::add);
         BigDecimal cashSales = paidBills.stream()
-                .filter(b -> b.getPaymentMode() == Bill.PaymentMode.CASH)
-                .map(b -> b.getNetAmount() != null ? b.getNetAmount() : BigDecimal.ZERO)
+                .map(b -> b.getPaymentSummary() != null ? cashPartOfSplit.getOrDefault(b.getId(), BigDecimal.ZERO)
+                        : (b.getPaymentMode() == Bill.PaymentMode.CASH ? (b.getNetAmount() != null ? b.getNetAmount() : BigDecimal.ZERO) : BigDecimal.ZERO))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         List<CashMovement> movements = cashMovementRepository.findByCreatedAtBetween(startDateTime, endDateTime);

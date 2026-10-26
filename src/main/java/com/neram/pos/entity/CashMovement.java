@@ -15,6 +15,7 @@ import java.time.LocalDateTime;
 @Builder
 @Entity
 @Table(name = "cash_movements")
+@org.hibernate.annotations.Filter(name = "outletScope", condition = "(shift_id IN (SELECT p.id FROM cashier_shifts p WHERE p.outlet_id = :outletId OR p.outlet_id IS NULL))")
 public class CashMovement {
 
     @Id

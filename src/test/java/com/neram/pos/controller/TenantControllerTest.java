@@ -30,6 +30,12 @@ class TenantControllerTest {
     @Mock
     private TenantSecurityService tenantSecurityService;
 
+    @Mock
+    private com.neram.pos.tenancy.TenantRegistry tenantRegistry;
+
+    @Mock
+    private com.neram.pos.service.PublicMenuCache publicMenuCache;
+
     @InjectMocks
     private TenantController tenantController;
 

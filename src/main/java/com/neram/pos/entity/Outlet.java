@@ -14,7 +14,7 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Entity
 @Table(name = "outlets")
-public class Outlet {
+public class Outlet implements com.neram.pos.tenancy.TenantScoped {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

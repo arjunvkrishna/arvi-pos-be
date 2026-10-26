@@ -46,7 +46,12 @@ public class NotificationStreamService {
 
     private static final Object ORDERS_SIGNAL_KEY = new Object();
 
-    private record Client(long id, String username, String channel, SseEmitter emitter) {}
+    private record Client(long id, long tenantId, String username, String channel, SseEmitter emitter) {}
+
+    /** Streams are per cafe: a signal in one cafe must never reach another cafe's terminals. */
+    private static long currentTenantId() {
+        return com.neram.pos.tenancy.TenantContext.currentId().orElse(0L);
+    }
 
     private final ConcurrentHashMap<Long, Client> clients = new ConcurrentHashMap<>();
     private final AtomicLong sequence = new AtomicLong();
@@ -67,9 +72,10 @@ public class NotificationStreamService {
      * stream on that channel when over the per-user cap. Returns null if the server is full.
      */
     public synchronized SseEmitter subscribe(String username, String channel) {
+        long tenantId = currentTenantId();
         List<Client> mine = new ArrayList<>();
         clients.values().forEach(c -> {
-            if (c.username().equals(username) && c.channel().equals(channel)) mine.add(c);
+            if (c.tenantId() == tenantId && c.username().equals(username) && c.channel().equals(channel)) mine.add(c);
         });
         if (mine.size() >= MAX_CONNECTIONS_PER_USER) {
             mine.stream().min(Comparator.comparingLong(Client::id)).ifPresent(old -> {
@@ -82,7 +88,7 @@ public class NotificationStreamService {
 
         long id = sequence.incrementAndGet();
         SseEmitter emitter = new SseEmitter(MAX_STREAM_MILLIS);
-        Client client = new Client(id, username, channel, emitter);
+        Client client = new Client(id, tenantId, username, channel, emitter);
         Runnable cleanup = () -> clients.remove(id);
         emitter.onCompletion(cleanup);
         // Rotating a long-lived stream is expected: complete it cleanly so the client simply reconnects.
@@ -147,21 +153,23 @@ public class NotificationStreamService {
      * Bursts of the same event coalesce into one signal.
      */
     void broadcast(String eventName) {
-        if (pendingBroadcasts.add(eventName)) {
+        long tenantId = currentTenantId();
+        String key = tenantId + ":" + eventName;
+        if (pendingBroadcasts.add(key)) {
             try {
                 sender.execute(() -> {
-                    pendingBroadcasts.remove(eventName);
-                    sendToChannel(eventName);
+                    pendingBroadcasts.remove(key);
+                    sendToChannel(tenantId, eventName);
                 });
             } catch (RuntimeException rejected) {
-                pendingBroadcasts.remove(eventName);
+                pendingBroadcasts.remove(key);
             }
         }
     }
 
-    private void sendToChannel(String eventName) {
+    private void sendToChannel(long tenantId, String eventName) {
         for (Client c : clients.values()) {
-            if (!c.channel().equals(eventName)) {
+            if (c.tenantId() != tenantId || !c.channel().equals(eventName)) {
                 continue;
             }
             try {

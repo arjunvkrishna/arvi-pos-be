@@ -13,5 +13,7 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByEmployeeId(Long employeeId);
     java.util.List<User> findByRoleAndActiveTrue(User.Role role);
     java.util.List<User> findByRoleInAndActiveTrue(java.util.List<User.Role> roles);
+    org.springframework.data.domain.Page<User> findByRoleInAndActiveTrue(java.util.List<User.Role> roles, org.springframework.data.domain.Pageable pageable);
     boolean existsByRole(User.Role role);
+    org.springframework.data.domain.Page<User> findByRoleNot(User.Role role, org.springframework.data.domain.Pageable pageable);
 }

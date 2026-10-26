@@ -73,6 +73,18 @@ public class OutletService {
             throw new SecurityException("Unauthorized to update outlet of another tenant");
         }
 
+        java.util.Optional<com.neram.pos.entity.User> caller = tenantSecurityService.getCurrentUser();
+        boolean cafeWide = caller.map(u -> com.neram.pos.access.AccessPolicy.hasCafeWideAccess(u.getRole())).orElse(true);
+        if (!cafeWide) {
+            // A branch manager edits only their own branch's details; opening/closing a branch is for owner and main manager.
+            if (!outlet.getId().equals(caller.get().getOutletId())) {
+                throw new SecurityException("You can only update your own branch");
+            }
+            if (update.getIsActive() != null && !update.getIsActive().equals(outlet.getIsActive())) {
+                throw new SecurityException("Only the owner or main manager can open or close a branch");
+            }
+        }
+
         if (update.getName() != null) outlet.setName(update.getName().trim());
         if (update.getAddress() != null) outlet.setAddress(update.getAddress().trim());
         if (update.getPhone() != null) outlet.setPhone(update.getPhone().trim());

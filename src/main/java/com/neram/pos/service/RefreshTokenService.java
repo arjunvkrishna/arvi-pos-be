@@ -7,7 +7,6 @@ import com.neram.pos.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -134,8 +133,7 @@ public class RefreshTokenService {
         }
     }
 
-    /** Keeps the table small: removes expired tokens and revoked tokens older than a week. */
-    @Scheduled(cron = "0 15 3 * * *")
+    /** Keeps the table small: removes expired tokens and revoked tokens older than a week. Run per cafe by RefreshTokenCleanupJob. */
     @Transactional
     public void purgeStale() {
         int removed = refreshTokenRepository.deleteStale(LocalDateTime.now().minusDays(7));

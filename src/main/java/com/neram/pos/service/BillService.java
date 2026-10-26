@@ -6,6 +6,7 @@ import com.neram.pos.dto.BillResponseDTO;
 import com.neram.pos.entity.Bill;
 import com.neram.pos.entity.BillItem;
 import com.neram.pos.entity.BillRefund;
+import com.neram.pos.entity.SystemNotification;
 import com.neram.pos.entity.User;
 import com.neram.pos.repository.BillItemRepository;
 import com.neram.pos.repository.BillRefundRepository;
@@ -44,13 +45,17 @@ public class BillService {
     private final DiningTableRepository diningTableRepository;
     private final UserRepository userRepository;
     private final com.neram.pos.repository.MenuItemRepository menuItemRepository;
+    private final MenuBranchService menuBranchService;
     private final AuditLogService auditLogService;
     private final GstSettingService gstSettingService;
     private final CashierShiftService cashierShiftService;
     private final RecipeService recipeService;
     private final BillRefundRepository billRefundRepository;
     private final PromotionService promotionService;
+    private final com.neram.pos.repository.BillPaymentRepository billPaymentRepository;
     private final AppSettingService appSettingService;
+    private final com.neram.pos.repository.SystemNotificationRepository notificationRepository;
+    private final NotificationStreamService notificationStream;
     @Lazy
     private final ThermalPrinterService thermalPrinterService;
 
@@ -73,25 +78,69 @@ public class BillService {
                 .collect(Collectors.toList());
     }
 
-    public List<BillResponseDTO> getDailyBills(LocalDate date) {
-        LocalDate queryDate = date != null ? date : LocalDate.now();
-        LocalDateTime start = queryDate.atStartOfDay();
-        LocalDateTime end = queryDate.atTime(LocalTime.MAX);
-        return billRepository.findByCreatedAtBetweenOrderByCreatedAtDesc(start, end)
-                .stream()
-                .map(this::toDTO)
-                .collect(Collectors.toList());
+    /** Start and end of the Bill Log period: one day, or a whole month when {@code monthly}. */
+    private static LocalDateTime[] logPeriod(boolean monthly, LocalDate date, Integer year, Integer month) {
+        if (monthly) {
+            LocalDate first = LocalDate.of(year != null ? year : LocalDate.now().getYear(), month != null ? month : LocalDate.now().getMonthValue(), 1);
+            return new LocalDateTime[]{first.atStartOfDay(), first.withDayOfMonth(first.lengthOfMonth()).atTime(LocalTime.MAX)};
+        }
+        LocalDate day = date != null ? date : LocalDate.now();
+        return new LocalDateTime[]{day.atStartOfDay(), day.atTime(LocalTime.MAX)};
     }
 
-    public List<BillResponseDTO> getMonthlyBills(int year, int month) {
-        LocalDate startMonth = LocalDate.of(year, month, 1);
-        LocalDate endMonth = startMonth.withDayOfMonth(startMonth.lengthOfMonth());
-        LocalDateTime start = startMonth.atStartOfDay();
-        LocalDateTime end = endMonth.atTime(LocalTime.MAX);
-        return billRepository.findByCreatedAtBetweenOrderByCreatedAtDesc(start, end)
-                .stream()
-                .map(this::toDTO)
-                .collect(Collectors.toList());
+    /** The Bill Log's filters as the native query takes them (see BillRepository.LOG_FILTER). */
+    private record LogFilter(String loc, long staffId, boolean staffUnknown, String q) {
+        static LogFilter of(UserRepository users, String orderType, String staff, String text) {
+            String loc = orderType == null ? "" : orderType.trim().toUpperCase();
+            if (!loc.equals("TABLE") && !loc.equals("OUTDOOR") && !loc.equals("TAKEAWAY")) loc = "";
+            long staffId = 0;
+            boolean unknown = false;
+            if (staff != null && !staff.isBlank()) {
+                var user = users.findByUsername(staff.trim());
+                if (user.isPresent()) staffId = user.get().getId();
+                else if ("Staff".equals(staff.trim())) unknown = true;   // the label shown for bills with no known creator
+                else staffId = -1;                                        // a name nobody has: no bill matches
+            }
+            return new LogFilter(loc, staffId, unknown, com.neram.pos.util.LikeSearch.nativePattern(text));
+        }
+    }
+
+    /**
+     * One page of the Bill Log (live and soft-deleted bills, newest first) for a day or a month, narrowed by the log's filters:
+     * order type (TABLE / OUTDOOR / TAKEAWAY), staff username, and a search over bill number, customer, tokens, table and staff.
+     */
+    public org.springframework.data.domain.Page<com.neram.pos.dto.BillLogRowDTO> getBillLog(boolean monthly, LocalDate date, Integer year, Integer month,
+                                                                            String orderType, String staff, String q,
+                                                                            org.springframework.data.domain.Pageable pageable) {
+        LocalDateTime[] p = logPeriod(monthly, date, year, month);
+        LogFilter f = LogFilter.of(userRepository, orderType, staff, q);
+        // The query sorts itself; the request's page and size are all that is taken from the pageable.
+        org.springframework.data.domain.Pageable plain = pageable == null || pageable.isUnpaged()
+                ? org.springframework.data.domain.Pageable.unpaged()
+                : org.springframework.data.domain.PageRequest.of(pageable.getPageNumber(), pageable.getPageSize());
+        // Only the bills on the page are converted (each conversion looks up names and refunds).
+        return billRepository.searchBillLog(p[0], p[1], f.loc(), f.staffId(), f.staffUnknown(), f.q(), plain).map(this::toLogRow);
+    }
+
+    /** Count and revenue shown above the Bill Log for the same filters (soft-deleted bills excluded). */
+    public com.neram.pos.dto.BillLogSummaryDTO getBillLogSummary(boolean monthly, LocalDate date, Integer year, Integer month,
+                                                                 String orderType, String staff, String q) {
+        LocalDateTime[] p = logPeriod(monthly, date, year, month);
+        LogFilter f = LogFilter.of(userRepository, orderType, staff, q);
+        BillRepository.BillLogTotals totals = billRepository.summarizeBillLog(p[0], p[1], f.loc(), f.staffId(), f.staffUnknown(), f.q());
+        long count = totals.getBillCount() != null ? totals.getBillCount() : 0L;
+        BigDecimal revenue = totals.getRevenue() != null ? totals.getRevenue().setScale(2, RoundingMode.HALF_UP) : BigDecimal.ZERO.setScale(2);
+        BigDecimal average = count > 0 ? revenue.divide(BigDecimal.valueOf(count), 2, RoundingMode.HALF_UP) : BigDecimal.ZERO.setScale(2);
+        return com.neram.pos.dto.BillLogSummaryDTO.builder().billCount(count).revenue(revenue).average(average).build();
+    }
+
+    /** Usernames for the Bill Log's staff filter: everyone who created or printed a bill in the period. */
+    public List<String> getBillLogStaff(boolean monthly, LocalDate date, Integer year, Integer month) {
+        LocalDateTime[] p = logPeriod(monthly, date, year, month);
+        List<String> names = new java.util.ArrayList<>(billRepository.findBillLogStaffNames(p[0], p[1]));
+        if (billRepository.existsBillLogUnknownCreator(p[0], p[1])) names.add("Staff");
+        names.sort(String.CASE_INSENSITIVE_ORDER);
+        return names;
     }
 
     public BillResponseDTO getBillById(Long id) {
@@ -260,7 +309,7 @@ public class BillService {
         if (saved.getStatus() == Bill.Status.PAID) {
             cashierShiftService.recordBillPayment(saved);
             saved = billRepository.save(saved);
-            recipeService.deductIngredientsForOrder(saved);
+            recipeService.settleBill(saved);
         }
 
         String createDetails = String.format("Created Bill #%s | %s | Net: ₹%.2f | Mode: %s | Items: %d",
@@ -292,6 +341,7 @@ public class BillService {
         BigDecimal oldNet = bill.getNetAmount() != null ? bill.getNetAmount() : BigDecimal.ZERO;
         String oldTable = bill.getTableNumber() != null ? bill.getTableNumber() : "Takeaway";
         String oldMode = bill.getPaymentMode() != null ? bill.getPaymentMode().name() : "CASH";
+        List<SplitPayments.Part> oldParts = partsOf(bill);
 
         String oldVal = String.format("Table: %s, Mode: %s, Discount: %.1f%%, Tax: %.1f%%, Items: [%s], Net: ₹%s",
                 oldTable, oldMode, oldDiscountPct, oldTaxPct, oldItemsStr, oldNet);
@@ -331,6 +381,7 @@ public class BillService {
         if (dto.getPaymentMode() != null) {
             try {
                 bill.setPaymentMode(Bill.PaymentMode.valueOf(dto.getPaymentMode().toUpperCase()));
+                bill.setPaymentSummary(null);   // choosing one mode again turns a split bill back into a single-mode bill
             } catch (Exception ignored) {}
         }
         if (dto.getNotes() != null) bill.setNotes(dto.getNotes());
@@ -380,14 +431,27 @@ public class BillService {
         // Recalculate discount, taxes, parcel charge and net amount
         computeBillAmounts(bill, dto.getDiscountPercent(), dto.getTaxPercent(), dto.getGstEnabled(), dto.getCgstPercent(), dto.getSgstPercent(), dto.getParcelCharge());
 
+        // A split bill whose amount changed keeps its parts in proportion; one switched to a single mode drops them
+        List<SplitPayments.Part> newParts = List.of();
+        if (!oldParts.isEmpty() && bill.getPaymentSummary() != null) {
+            newParts = SplitPayments.rescale(oldParts, bill.getNetAmount());
+            bill.setPaymentSummary(SplitPayments.summary(newParts));
+            bill.setPaymentMode(SplitPayments.primary(newParts).mode());
+        }
         Bill saved = billRepository.save(bill);
+        if (!oldParts.isEmpty()) saveParts(saved.getId(), newParts);
+
+        // A paid bill edited from the Bill Log: the stock follows the new items (only the difference is taken or returned)
+        if (saved.getStatus() == Bill.Status.PAID || saved.getStatus() == Bill.Status.PARTIALLY_REFUNDED) {
+            recipeService.settleBill(saved);
+        }
 
         if (saved.getStatus() == Bill.Status.PAID && saved.getShiftId() != null) {
             Bill.PaymentMode oldPaymentMode = null;
             try {
                 oldPaymentMode = Bill.PaymentMode.valueOf(oldMode);
             } catch (Exception ignored) {}
-            cashierShiftService.recordBillAdjustment(saved, oldPaymentMode, oldNet);
+            cashierShiftService.recordBillAdjustment(saved, oldPaymentMode, oldNet, oldParts, newParts);
         }
 
         String newItemsStr = saved.getItems() != null ? saved.getItems().stream()
@@ -412,6 +476,45 @@ public class BillService {
         return toDTO(saved);
     }
 
+    private static final List<Bill.Status> CLOSED_STATUSES = List.of(
+            Bill.Status.BILL_REQUESTED, Bill.Status.BILL_PRINTED);
+
+    /** Ids of the 5 newest BILL_REQUESTED or BILL_PRINTED bills: the only ones the Bill Log lets an admin/manager delete. */
+    public List<Long> getDeletableBillIds() {
+        return billRepository.findTop5ByStatusInOrderByCreatedAtDescIdDesc(CLOSED_STATUSES).stream().map(Bill::getId).collect(Collectors.toList());
+    }
+
+    /** Soft delete: the row stays (deleted_at set) but disappears from every list, report and total; recorded in the audit log. */
+    @Transactional
+    public void softDeleteBill(Long id, String reason) {
+        if (reason == null || reason.trim().isEmpty()) {
+            throw new IllegalArgumentException("A reason is required to delete a bill.");
+        }
+        Bill bill = billRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new RuntimeException("Bill not found with id: " + id));
+        if (!getDeletableBillIds().contains(id)) {
+            throw new IllegalStateException("Only the last 5 bills in the Bill Log can be deleted.");
+        }
+        String username = "SYSTEM";
+        Long userId = null;
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.isAuthenticated() && !"anonymousUser".equals(auth.getPrincipal())) {
+            username = auth.getName();
+            userId = userRepository.findByUsername(username).map(User::getId).orElse(null);
+        }
+        String cleanReason = reason.trim();
+        String billInfo = String.format("Bill #%s | %s | Net: ₹%s | Status: %s | Payment: %s",
+                bill.getBillNumber(),
+                bill.getTableNumber() != null ? "Table: " + bill.getTableNumber() : String.valueOf(bill.getOrderType()),
+                bill.getNetAmount(), bill.getStatus(), bill.getPaymentMode());
+        bill.setDeletedAt(LocalDateTime.now());
+        bill.setDeletedBy(userId);
+        bill.setDeletedByName(username);
+        bill.setDeleteReason(cleanReason);
+        billRepository.save(bill);
+        auditLogService.log("DELETE_BILL", "BILL", id, billInfo, "Soft-deleted bill #" + bill.getBillNumber() + " | Reason: " + cleanReason);
+    }
+
     @Transactional
     public void deleteBill(Long id) {
         Bill bill = billRepository.findById(id)
@@ -427,6 +530,7 @@ public class BillService {
                 bill.getTableNumber() != null ? bill.getTableNumber() : "Takeaway",
                 bill.getNetAmount(),
                 bill.getStatus());
+        recipeService.restoreBill(bill, "bill deleted");
         billRepository.delete(bill);
         auditLogService.log("DELETE_BILL", "BILL", id, billInfo, "Deleted bill #" + bill.getBillNumber());
     }
@@ -664,8 +768,9 @@ public class BillService {
         }
 
         boolean isManagerOrAdmin = isManagerOrAdmin();
+        boolean canSetDiscount = isManagerOrAdmin || hasPrintBillAccess();
         if (!isManagerOrAdmin) {
-            if (dto.getDiscountPercent() != null) {
+            if (!canSetDiscount && dto.getDiscountPercent() != null) {
                 if (bill.getId() == null && Math.abs(dto.getDiscountPercent()) > 0.0001) {
                     throw new AccessDeniedException("Staff users cannot set or change discounts. Only Manager and Admin users are permitted.");
                 } else if (bill.getId() != null && (bill.getDiscountPercent() == null ? Math.abs(dto.getDiscountPercent()) > 0.0001 : !Objects.equals(dto.getDiscountPercent(), bill.getDiscountPercent()))) {
@@ -846,7 +951,7 @@ public class BillService {
         }
 
         bill.setSubtotal(subtotal.setScale(2, RoundingMode.HALF_UP));
-        Double discToApply = isManagerOrAdmin ? (dto.getDiscountPercent() != null ? dto.getDiscountPercent() : bill.getDiscountPercent()) : bill.getDiscountPercent();
+        Double discToApply = canSetDiscount ? (dto.getDiscountPercent() != null ? dto.getDiscountPercent() : bill.getDiscountPercent()) : bill.getDiscountPercent();
         Double taxToApply = isManagerOrAdmin ? dto.getTaxPercent() : bill.getTaxPercent();
         Boolean gstToApply = isManagerOrAdmin ? dto.getGstEnabled() : bill.getGstEnabled();
         Double cgstToApply = isManagerOrAdmin ? dto.getCgstPercent() : bill.getCgstPercent();
@@ -868,20 +973,38 @@ public class BillService {
                 .orElse(null);
     }
 
+    /** Statuses in which an order can still be moved: once the bill is requested/printed the paper copy would carry the old location. */
+    private static final List<Bill.Status> MOVABLE_STATUSES = List.of(Bill.Status.ACTIVE, Bill.Status.KOT_REQUESTED, Bill.Status.KOT_PRINTED);
+
+    /**
+     * Moves a live order to another seat: table to table, table to outdoor/takeaway, outdoor/takeaway to a table.
+     * If the target table already has an open order the caller may ask for a merge, which folds this order into that one.
+     */
     @Transactional
     public BillResponseDTO changeOrderLocation(Long id, com.neram.pos.dto.ChangeLocationRequestDTO dto) {
-        Bill bill = billRepository.findById(id)
+        Bill bill = billRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new RuntimeException("Order not found with id: " + id));
 
-        if (bill.getStatus() == Bill.Status.PAID || bill.getStatus() == Bill.Status.CANCELLED) {
+        if (bill.getStatus() == Bill.Status.BILL_REQUESTED || bill.getStatus() == Bill.Status.BILL_PRINTED) {
+            throw new IllegalStateException("The bill has already been requested/printed for this order, so it can no longer be moved.");
+        }
+        if (!MOVABLE_STATUSES.contains(bill.getStatus())) {
             throw new IllegalStateException("Cannot change location of completed or cancelled order.");
         }
 
-        String targetType = dto.getOrderType() != null ? dto.getOrderType().toUpperCase() : "TABLE";
+        String targetType = dto.getOrderType() != null ? dto.getOrderType().trim().toUpperCase() : "TABLE";
+        String fromLocation = getLocationDisplay(bill);
+        boolean kotAlreadySent = bill.getKotPrintedAt() != null;
+        String reason = dto.getReason() != null && !dto.getReason().isBlank() ? dto.getReason().trim() : null;
         List<Bill.Status> activeStatuses = List.of(Bill.Status.ACTIVE, Bill.Status.KOT_REQUESTED, Bill.Status.KOT_PRINTED, Bill.Status.BILL_REQUESTED, Bill.Status.BILL_PRINTED);
+        Bill result;
+        String action = "CHANGE_ORDER_LOCATION";
 
         if ("OUTDOOR".equals(targetType)) {
-            String cName = dto.getCustomerName() != null ? dto.getCustomerName().trim() : (bill.getCustomerName() != null ? bill.getCustomerName().trim() : "");
+            if (bill.getOrderType() == Bill.OrderType.OUTDOOR) {
+                throw new IllegalArgumentException("This order is already an outdoor order.");
+            }
+            String cName = dto.getCustomerName() != null && !dto.getCustomerName().trim().isBlank() ? dto.getCustomerName().trim() : (bill.getCustomerName() != null ? bill.getCustomerName().trim() : "");
             if (cName.isBlank()) {
                 throw new IllegalArgumentException("Customer name is required for outdoor orders.");
             }
@@ -893,13 +1016,12 @@ public class BillService {
             bill.setTableNumber(null);
             bill.setTakeawayToken(null);
             computeBillAmounts(bill, bill.getDiscountPercent(), bill.getTaxPercent(), bill.getGstEnabled(), bill.getCgstPercent(), bill.getSgstPercent(), bill.getParcelCharge());
-            Bill saved = billRepository.save(bill);
-            auditLogService.log("CHANGE_ORDER_LOCATION", "BILL", saved.getId(), null,
-                    String.format("Changed order #%s location to Outdoor (%s • %s)",
-                            saved.getBillNumber(), saved.getCustomerName(), saved.getOutdoorToken()));
-            return toDTO(saved);
+            result = billRepository.save(bill);
         } else if ("TAKEAWAY".equals(targetType)) {
-            String cName = dto.getCustomerName() != null && !dto.getCustomerName().trim().isBlank() ? dto.getCustomerName().trim() : (bill.getCustomerName() != null ? bill.getCustomerName().trim() : "Takeaway Guest");
+            if (bill.getOrderType() == Bill.OrderType.TAKEAWAY) {
+                throw new IllegalArgumentException("This order is already a takeaway order.");
+            }
+            String cName = dto.getCustomerName() != null && !dto.getCustomerName().trim().isBlank() ? dto.getCustomerName().trim() : (bill.getCustomerName() != null && !bill.getCustomerName().isBlank() ? bill.getCustomerName().trim() : "Takeaway Guest");
             bill.setCustomerName(cName);
             if (bill.getTakeawayToken() == null) {
                 bill.setTakeawayToken(dto.getTakeawayToken() != null && !dto.getTakeawayToken().isBlank() ? dto.getTakeawayToken().trim() : generateTakeawayToken());
@@ -908,37 +1030,156 @@ public class BillService {
             bill.setTableNumber(null);
             bill.setOutdoorToken(null);
             computeBillAmounts(bill, bill.getDiscountPercent(), bill.getTaxPercent(), bill.getGstEnabled(), bill.getCgstPercent(), bill.getSgstPercent(), bill.getParcelCharge());
-            Bill saved = billRepository.save(bill);
-            auditLogService.log("CHANGE_ORDER_LOCATION", "BILL", saved.getId(), null,
-                    String.format("Changed order #%s location to Takeaway (%s • %s)",
-                            saved.getBillNumber(), saved.getCustomerName(), saved.getTakeawayToken()));
-            return toDTO(saved);
+            result = billRepository.save(bill);
         } else {
-            // Target is TABLE or legacy TAKEAWAY
             if (dto.getTableNumber() == null || dto.getTableNumber().trim().isBlank()) {
                 throw new IllegalArgumentException("Please select a table.");
             }
             String targetTable = dto.getTableNumber().trim();
-            if (!targetTable.equalsIgnoreCase("Takeaway") && !diningTableRepository.existsByNameIgnoreCaseAndActiveTrue(targetTable)) {
+            if (bill.getOrderType() == Bill.OrderType.TABLE && targetTable.equalsIgnoreCase(bill.getTableNumber())) {
+                throw new IllegalArgumentException("This order is already on table " + bill.getTableNumber() + ".");
+            }
+            if (!diningTableRepository.existsByNameIgnoreCaseAndActiveTrue(targetTable)) {
                 throw new IllegalArgumentException("Invalid table selected: " + targetTable);
             }
-            // Check if another active order is already on that table
+            // Same per-table lock createOrder takes, so a move and a new order cannot both claim the table.
+            diningTableRepository.lockActiveByNameIgnoreCase(targetTable);
+
             Optional<Bill> existingActive = billRepository.findFirstByTableNumberAndStatusInOrderByCreatedAtDesc(targetTable, activeStatuses);
             if (existingActive.isPresent() && !existingActive.get().getId().equals(bill.getId())) {
-                throw new IllegalStateException("Table " + targetTable + " already has an active order!");
+                Bill target = existingActive.get();
+                if (!Boolean.TRUE.equals(dto.getMergeIfOccupied())) {
+                    throw new IllegalStateException("Table " + target.getTableNumber() + " already has an active order (Ref #" + target.getBillNumber()
+                            + "). Choose merge to combine both orders.");
+                }
+                result = mergeOrders(bill, target);
+                action = "MERGE_ORDERS";
+            } else {
+                bill.setTableNumber(targetTable);
+                bill.setOrderType(Bill.OrderType.TABLE);
+                bill.setOutdoorToken(null);
+                bill.setTakeawayToken(null);
+                if (dto.getCustomerName() != null && !dto.getCustomerName().trim().isBlank()) {
+                    bill.setCustomerName(dto.getCustomerName().trim());
+                }
+                computeBillAmounts(bill, bill.getDiscountPercent(), bill.getTaxPercent(), bill.getGstEnabled(), bill.getCgstPercent(), bill.getSgstPercent(), bill.getParcelCharge());
+                result = billRepository.save(bill);
             }
-            bill.setTableNumber(targetTable);
-            bill.setOrderType(targetTable.equalsIgnoreCase("Takeaway") ? Bill.OrderType.TAKEAWAY : Bill.OrderType.TABLE);
-            bill.setOutdoorToken(null);
-            bill.setTakeawayToken(null);
-            if (dto.getCustomerName() != null && !dto.getCustomerName().trim().isBlank()) {
-                bill.setCustomerName(dto.getCustomerName().trim());
+        }
+
+        String toLocation = getLocationDisplay(result);
+        String detail = "MERGE_ORDERS".equals(action)
+                ? String.format("Merged order #%s (%s) into order #%s (%s)", bill.getBillNumber(), fromLocation, result.getBillNumber(), toLocation)
+                : String.format("Moved order #%s from %s to %s", result.getBillNumber(), fromLocation, toLocation);
+        if (reason != null) detail += " | Reason: " + reason;
+        auditLogService.log(action, "BILL", result.getId(), fromLocation, detail);
+
+        if (kotAlreadySent) {
+            notifyKitchenOfMove(result, fromLocation, toLocation);
+        }
+        return toDTO(result);
+    }
+
+    /**
+     * Folds {@code source} into {@code target} (two parties joining tables). Items with the same dish/customisation are
+     * summed, already-printed quantities are carried over so nothing is re-sent to the kitchen, stock consumption is
+     * re-attributed to the surviving bill, and the source order is closed as CANCELLED with a pointer to the survivor.
+     */
+    private Bill mergeOrders(Bill source, Bill target) {
+        Bill lockedTarget = billRepository.findByIdForUpdate(target.getId()).orElse(target);
+        if (!MOVABLE_STATUSES.contains(lockedTarget.getStatus())) {
+            throw new IllegalStateException("Table " + lockedTarget.getTableNumber() + " has a bill that is already requested/printed, so orders cannot be merged into it.");
+        }
+        if (source.getStatus() == Bill.Status.KOT_REQUESTED || lockedTarget.getStatus() == Bill.Status.KOT_REQUESTED) {
+            throw new IllegalStateException("A kitchen ticket is waiting to print for one of these orders. Wait for it to print, then merge.");
+        }
+
+        for (BillItem si : source.getItems()) {
+            BillItem match = null;
+            for (BillItem ti : lockedTarget.getItems()) {
+                if (si.getMenuItemId() != null
+                        && Objects.equals(ti.getMenuItemId(), si.getMenuItemId())
+                        && Objects.equals(normalizeCustomization(ti.getCustomization()), normalizeCustomization(si.getCustomization()))
+                        && Boolean.TRUE.equals(ti.getIsTakeaway()) == Boolean.TRUE.equals(si.getIsTakeaway())
+                        && ti.getPrice() != null && si.getPrice() != null && ti.getPrice().compareTo(si.getPrice()) == 0) {
+                    match = ti;
+                    break;
+                }
             }
-            computeBillAmounts(bill, bill.getDiscountPercent(), bill.getTaxPercent(), bill.getGstEnabled(), bill.getCgstPercent(), bill.getSgstPercent(), bill.getParcelCharge());
-            Bill saved = billRepository.save(bill);
-            auditLogService.log("CHANGE_ORDER_LOCATION", "BILL", saved.getId(), null,
-                    String.format("Changed order #%s location to Table %s", saved.getBillNumber(), saved.getTableNumber()));
-            return toDTO(saved);
+            int sPrinted = si.getPrintedQuantity() != null ? si.getPrintedQuantity() : 0;
+            if (match != null) {
+                match.setQuantity(match.getQuantity() + si.getQuantity());
+                match.setPrintedQuantity((match.getPrintedQuantity() != null ? match.getPrintedQuantity() : 0) + sPrinted);
+                match.setSubtotal(match.getPrice().multiply(BigDecimal.valueOf(match.getQuantity())).setScale(2, RoundingMode.HALF_UP));
+            } else {
+                BillItem copy = new BillItem();
+                copy.setBill(lockedTarget);
+                copy.setMenuItemId(si.getMenuItemId());
+                copy.setItemName(si.getItemName());
+                copy.setQuantity(si.getQuantity());
+                copy.setPrintedQuantity(sPrinted);
+                copy.setPrice(si.getPrice());
+                copy.setSubtotal(si.getSubtotal());
+                copy.setCustomization(si.getCustomization());
+                copy.setIsTakeaway(si.getIsTakeaway() != null ? si.getIsTakeaway() : false);
+                lockedTarget.getItems().add(copy);
+            }
+        }
+
+        BigDecimal subtotal = lockedTarget.getItems().stream()
+                .map(i -> i.getSubtotal() != null ? i.getSubtotal() : BigDecimal.ZERO)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        lockedTarget.setSubtotal(subtotal.setScale(2, RoundingMode.HALF_UP));
+
+        // Items the kitchen already received on the source order count as sent on the survivor too.
+        if (lockedTarget.getKotPrintedAt() == null && source.getKotPrintedAt() != null) {
+            lockedTarget.setKotPrintedAt(source.getKotPrintedAt());
+            if (lockedTarget.getKotNumber() == null) lockedTarget.setKotNumber(source.getKotNumber());
+            if (lockedTarget.getStatus() == Bill.Status.ACTIVE) lockedTarget.setStatus(Bill.Status.KOT_PRINTED);
+        }
+        if ((lockedTarget.getCustomerName() == null || lockedTarget.getCustomerName().isBlank())
+                && source.getCustomerName() != null && !source.getCustomerName().isBlank()) {
+            lockedTarget.setCustomerName(source.getCustomerName());
+        }
+        computeBillAmounts(lockedTarget, lockedTarget.getDiscountPercent(), lockedTarget.getTaxPercent(), lockedTarget.getGstEnabled(),
+                lockedTarget.getCgstPercent(), lockedTarget.getSgstPercent(), lockedTarget.getParcelCharge());
+
+        recipeService.transferConsumption(source.getId(), lockedTarget.getId());
+
+        User currentUser = getCurrentUser();
+        source.setStatus(Bill.Status.CANCELLED);
+        source.setVoidedAt(LocalDateTime.now());
+        if (currentUser != null) {
+            source.setVoidedBy(currentUser.getId());
+            source.setVoidedByName(currentUser.getUsername());
+        }
+        source.setVoidReason("Merged into order #" + lockedTarget.getBillNumber());
+        billRepository.save(source);
+        return billRepository.save(lockedTarget);
+    }
+
+    private String normalizeCustomization(String c) {
+        return c == null ? "" : c.trim();
+    }
+
+    /** Tells staff to inform the kitchen: a KOT with the old location has already been printed and is on the pass. */
+    private void notifyKitchenOfMove(Bill bill, String from, String to) {
+        if (notificationRepository == null) return;
+        try {
+            String msg = String.format("Order #%s moved from %s to %s after its kitchen ticket was printed. Let the kitchen know.",
+                    bill.getBillNumber(), from, to);
+            notificationRepository.save(SystemNotification.builder()
+                    .type(SystemNotification.NotificationType.GENERAL)
+                    .title("Order moved")
+                    .message(msg.length() > 1000 ? msg.substring(0, 1000) : msg)
+                    .referenceId(bill.getId())
+                    .createdBy("System")
+                    .status(SystemNotification.Status.UNREAD)
+                    .createdAt(LocalDateTime.now())
+                    .build());
+            if (notificationStream != null) notificationStream.publishChangedAfterCommit();
+        } catch (Exception e) {
+            log.warn("Could not raise order-moved notification for bill #{}: {}", bill.getId(), e.getMessage());
         }
     }
 
@@ -1076,8 +1317,8 @@ public class BillService {
         // Set status to KOT_PRINTED so waiter immediately knows the print status
         bill.setStatus(Bill.Status.KOT_PRINTED);
 
+        // Stock is taken when the bill is settled (payment), not when the kitchen ticket prints.
         Bill saved = billRepository.save(bill);
-        recipeService.deductIngredientsForOrder(saved);
 
         auditLogService.log("PRINT_KOT", "BILL", saved.getId(), null,
                 String.format("Printed Kitchen Order Ticket (KOT) for Table %s | KOT/Bill #%s | Items Printed: %d",
@@ -1322,7 +1563,7 @@ public class BillService {
 
         Bill saved = billRepository.save(bill);
         cashierShiftService.recordBillPayment(saved);
-        recipeService.deductIngredientsForOrder(saved);
+        recipeService.settleBill(saved);
         saved = billRepository.save(saved);
 
         BillResponseDTO res = toDTO(saved);
@@ -1347,7 +1588,8 @@ public class BillService {
             throw new IllegalStateException("Bill can only be printed after bill request has been submitted.");
         }
 
-        if (dto != null) {
+        // An employee who was given the print-bill access may set the discount; tax, payment mode and parcel charge stay as the order holds them
+        if (dto != null && isManagerOrAdmin()) {
             if (dto.getPaymentMode() != null) {
                 try {
                     bill.setPaymentMode(Bill.PaymentMode.valueOf(dto.getPaymentMode().toUpperCase()));
@@ -1360,7 +1602,8 @@ public class BillService {
             Double sgstPct = dto.getSgstPercent();
             computeBillAmounts(bill, discPct, taxPct, gstEn, cgstPct, sgstPct, dto.getParcelCharge());
         } else {
-            computeBillAmounts(bill, bill.getDiscountPercent(), bill.getTaxPercent(), bill.getGstEnabled(), bill.getCgstPercent(), bill.getSgstPercent(), bill.getParcelCharge());
+            Double discount = dto != null && dto.getDiscountPercent() != null && hasPrintBillAccess() ? Math.max(0.0, dto.getDiscountPercent()) : bill.getDiscountPercent();
+            computeBillAmounts(bill, discount, bill.getTaxPercent(), bill.getGstEnabled(), bill.getCgstPercent(), bill.getSgstPercent(), bill.getParcelCharge());
         }
 
         bill.setStatus(Bill.Status.BILL_PRINTED);
@@ -1376,7 +1619,7 @@ public class BillService {
 
         BillResponseDTO res = toDTO(saved);
         auditLogService.log("PRINT_BILL", "BILL", saved.getId(), null,
-                String.format("Manager printed Bill #%s | %s | Net: ₹%s | Payment Status: PENDING",
+                String.format("%s printed Bill #%s | %s | Net: ₹%s | Payment Status: PENDING", isManagerOrAdmin() ? "Manager" : "Employee",
                         saved.getBillNumber(), getLocationDisplay(saved), saved.getNetAmount()));
         return res;
     }
@@ -1412,14 +1655,27 @@ public class BillService {
             computeBillAmounts(bill, bill.getDiscountPercent(), bill.getTaxPercent(), bill.getGstEnabled(), bill.getCgstPercent(), bill.getSgstPercent(), bill.getParcelCharge());
         }
 
+        bill.setTipAmount(validTip(dto != null ? dto.getTipAmount() : null));
+
+        // Paid in more than one way (cash + UPI...): the parts must add up to the bill. One part is just a normal payment.
+        List<SplitPayments.Part> split = SplitPayments.validate(dto != null ? dto.getPayments() : null, bill.getNetAmount());
+        if (split.size() == 1) {
+            bill.setPaymentMode(split.get(0).mode());
+            split = List.of();
+        } else if (split.size() > 1) {
+            bill.setPaymentMode(SplitPayments.primary(split).mode());
+        }
+        bill.setPaymentSummary(split.size() > 1 ? SplitPayments.summary(split) : null);
+
         bill.setStatus(Bill.Status.PAID);
         if (bill.getPrintedAt() == null) {
             bill.setPrintedAt(LocalDateTime.now());
         }
 
         Bill saved = billRepository.save(bill);
+        if (split.size() > 1) saveParts(saved.getId(), split);
         cashierShiftService.recordBillPayment(saved);
-        recipeService.deductIngredientsForOrder(saved);
+        recipeService.settleBill(saved);
         saved = billRepository.save(saved);
 
         BillResponseDTO res = toDTO(saved);
@@ -1429,15 +1685,77 @@ public class BillService {
         return res;
     }
 
+    private void saveParts(Long billId, List<SplitPayments.Part> parts) {
+        billPaymentRepository.deleteByBillId(billId);
+        if (parts.size() < 2) return;
+        billPaymentRepository.saveAll(parts.stream().map(p -> new com.neram.pos.entity.BillPayment(null, billId, p.mode().name(), p.amount(), p.reference(), LocalDateTime.now())).collect(Collectors.toList()));
+    }
+
+    private List<SplitPayments.Part> partsOf(Bill b) {
+        if (b == null || b.getId() == null || b.getPaymentSummary() == null) return List.of();
+        return billPaymentRepository.findByBillIdOrderByIdAsc(b.getId()).stream()
+                .map(p -> new SplitPayments.Part(Bill.PaymentMode.valueOf(p.getMode()), p.getAmount(), p.getReference())).collect(Collectors.toList());
+    }
+
+    /** A tip must be zero or more and, as a guard against typing mistakes, at most 100000. */
+    static BigDecimal validTip(BigDecimal tip) {
+        if (tip == null) return BigDecimal.ZERO.setScale(2);
+        if (tip.signum() < 0) throw new IllegalArgumentException("Tip cannot be negative.");
+        if (tip.compareTo(new BigDecimal("100000")) > 0) throw new IllegalArgumentException("Tip looks too large. Check the amount.");
+        return tip.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * Bill numbers are unique across the whole cafe, so the next number is worked out over all branches (not just the
+     * caller's) and including soft-deleted bills. The prefix comes from the cafe's own code, never another brand's.
+     */
     private String generateBillNumber() {
         String datePart = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-        long count = billRepository.countTotalBills() + 1;
-        String candidate = String.format("NRM-%s-%04d", datePart, count);
-        while (billRepository.findByBillNumber(candidate).isPresent()) {
-            count++;
-            candidate = String.format("NRM-%s-%04d", datePart, count);
-        }
-        return candidate;
+        String prefix = billPrefix();
+        return com.neram.pos.access.OutletContext.callUnrestricted(() -> {
+            long count = billRepository.countAllBillsIncludingDeleted() + 1;
+            String candidate = String.format("%s-%s-%04d", prefix, datePart, count);
+            while (billRepository.billNumberTaken(candidate)) {
+                count++;
+                candidate = String.format("%s-%s-%04d", prefix, datePart, count);
+            }
+            return candidate;
+        });
+    }
+
+    static String billPrefix() {
+        String code = com.neram.pos.tenancy.TenantContext.current().map(com.neram.pos.tenancy.TenantInfo::code).orElse("bill");
+        String letters = code.replaceAll("[^A-Za-z0-9]", "").toUpperCase();
+        return letters.isEmpty() ? "BILL" : letters.substring(0, Math.min(3, letters.length()));
+    }
+
+
+    /** The slim row the Bill Log lists: no item lines, tax split or KOT detail (those come from GET /bills/{id}). */
+    private com.neram.pos.dto.BillLogRowDTO toLogRow(Bill b) {
+        String creatorName = b.getCreatedBy() == null ? "Staff" : userRepository.findById(b.getCreatedBy()).map(User::getUsername).orElse("Staff");
+        String printerName = b.getPrintedBy() == null ? null : userRepository.findById(b.getPrintedBy()).map(User::getUsername).orElse(null);
+        String oType = b.getOrderType() != null ? b.getOrderType().name() : (b.getTakeawayToken() != null || (b.getTableNumber() != null && b.getTableNumber().equalsIgnoreCase("Takeaway")) ? "TAKEAWAY" : (b.getOutdoorToken() != null ? "OUTDOOR" : "TABLE"));
+        BigDecimal refunded = billRefundRepository.sumSuccessfulRefundsByBillId(b.getId());
+        return com.neram.pos.dto.BillLogRowDTO.builder()
+                .id(b.getId())
+                .billNumber(b.getBillNumber())
+                .orderType(oType)
+                .tableNumber(b.getTableNumber())
+                .outdoorToken(b.getOutdoorToken())
+                .takeawayToken(b.getTakeawayToken())
+                .customerName(b.getCustomerName())
+                .createdByName(creatorName)
+                .printedByName(printerName)
+                .createdAt(b.getCreatedAt())
+                .itemCount(b.getItems() != null ? b.getItems().size() : 0)
+                .paymentMode(b.getPaymentMode().name())
+                .netAmount(b.getNetAmount())
+                .status(b.getStatus().name())
+                .totalRefunded(refunded != null ? refunded : BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP))
+                .deletedAt(b.getDeletedAt())
+                .deletedByName(b.getDeletedByName())
+                .deleteReason(b.getDeleteReason())
+                .build();
     }
 
     public BillResponseDTO toDTO(Bill b) {
@@ -1529,6 +1847,9 @@ public class BillService {
                 .promotionPercentage(b.getPromotionPercentage())
                 .promotionDiscountAmount(b.getPromotionDiscountAmount() != null ? b.getPromotionDiscountAmount() : BigDecimal.ZERO)
                 .netAmount(b.getNetAmount())
+                .tipAmount(b.getTipAmount() != null ? b.getTipAmount() : BigDecimal.ZERO)
+                .paymentSummary(b.getPaymentSummary())
+                .payments(partsOf(b).isEmpty() ? null : partsOf(b).stream().map(p -> new BillRequestDTO.PaymentPart(p.mode().name(), p.amount(), p.reference())).collect(Collectors.toList()))
                 .paymentMode(b.getPaymentMode().name())
                 .status(b.getStatus().name())
                 .notes(b.getNotes())
@@ -1550,6 +1871,9 @@ public class BillService {
                 .voidedByName(b.getVoidedByName())
                 .voidedAt(b.getVoidedAt())
                 .voidReason(b.getVoidReason())
+                .deletedAt(b.getDeletedAt())
+                .deletedByName(b.getDeletedByName())
+                .deleteReason(b.getDeleteReason())
                 .refundedAmount(refunded)
                 .totalRefunded(refunded)
                 .remainingRefundableAmount(remainingRefundable)
@@ -1590,10 +1914,12 @@ public class BillService {
         }
         com.neram.pos.entity.MenuItem menuItem = menuItemRepository.findById(menuItemId)
                 .orElseThrow(() -> new IllegalArgumentException("Menu item not found: " + menuItemId));
-        if (requireAvailable && (!Boolean.TRUE.equals(menuItem.getIsAvailable()) || Boolean.FALSE.equals(menuItem.getActive()))) {
+        // The branch the order is taken in decides the price and whether the item is sold out.
+        MenuBranchService.Effective here = menuBranchService.effective(menuItem);
+        if (requireAvailable && (!here.available() || Boolean.FALSE.equals(menuItem.getActive()))) {
             throw new IllegalArgumentException("'" + menuItem.getName() + "' is currently unavailable");
         }
-        BigDecimal price = (privileged && clientPrice != null) ? clientPrice : menuItem.getPrice();
+        BigDecimal price = (privileged && clientPrice != null) ? clientPrice : here.price();
         return price.setScale(2, RoundingMode.HALF_UP);
     }
 
@@ -1760,6 +2086,17 @@ public class BillService {
             bill.setPromotionDiscountAmount(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
             bill.setNetAmount(totalAfterGstAndRoundOff);
         }
+    }
+
+    /** The caller holds the print-bill access (admins and managers always do; an employee only while it is switched on for them). */
+    public boolean hasPrintBillAccess() {
+        try {
+            Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+            if (auth != null && auth.isAuthenticated() && !auth.getPrincipal().equals("anonymousUser")) {
+                return auth.getAuthorities().stream().anyMatch(a -> "PERM_PRINT_BILL".equals(a.getAuthority()));
+            }
+        } catch (Exception ignored) {}
+        return false;
     }
 
     public boolean isManagerOrAdmin() {

@@ -11,6 +11,8 @@ import java.util.Optional;
 @Repository
 public interface AttendanceRepository extends JpaRepository<Attendance, Long> {
     List<Attendance> findByDate(LocalDate date);
+    org.springframework.data.domain.Page<Attendance> findByDate(LocalDate date, org.springframework.data.domain.Pageable pageable);
+    org.springframework.data.domain.Page<Attendance> findByEmployeeId(Long employeeId, org.springframework.data.domain.Pageable pageable);
     List<Attendance> findByEmployeeId(Long employeeId);
     List<Attendance> findByEmployeeIdOrderByDateDesc(Long employeeId);
     List<Attendance> findByEmployeeIdOrderByDateDescIdDesc(Long employeeId);

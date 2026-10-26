@@ -18,4 +18,7 @@ public class CreateUserRequestDTO {
     private Boolean canManageInventory;
     private Boolean canManageExpenses;
     private Boolean canViewReports;
+    private Boolean canPrintBill;
+    private Boolean canManageMenu;
+    private Boolean canManageSettings;
 }

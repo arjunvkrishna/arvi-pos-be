@@ -4,6 +4,8 @@ import com.neram.pos.dto.EmployeeDTO;
 import com.neram.pos.dto.EmployeeRequestDTO;
 import com.neram.pos.service.EmployeeService;
 import lombok.RequiredArgsConstructor;
+import com.neram.pos.util.PagedResponse;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -20,12 +22,12 @@ public class EmployeeController {
 
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
-    public ResponseEntity<List<EmployeeDTO>> getAllEmployees(@RequestParam(required = false) String role, Authentication auth) {
+    public ResponseEntity<List<EmployeeDTO>> getAllEmployees(@RequestParam(required = false) String role, Authentication auth, Pageable pageable) {
         String callerRole = getRoleFromAuth(auth);
         if (role != null && !role.isBlank()) {
-            return ResponseEntity.ok(employeeService.getEmployeesByRole(role, callerRole));
+            return PagedResponse.of(employeeService.getEmployeesByRole(role, callerRole, pageable));
         }
-        return ResponseEntity.ok(employeeService.getAllEmployees(callerRole));
+        return PagedResponse.of(employeeService.getAllEmployees(callerRole, pageable));
     }
 
     @GetMapping("/{id}")

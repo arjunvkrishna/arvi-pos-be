@@ -11,6 +11,8 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class PrintBridgeHeartbeatDTO {
     private String bridgeId;
+    /** the ESP32 firmware sends this as "ipAddress" */
+    @com.fasterxml.jackson.annotation.JsonAlias("ipAddress")
     private String bridgeIp;
     private String printerHost;
     private Integer printerPort;
@@ -42,4 +44,7 @@ public class PrintBridgeHeartbeatDTO {
     private String lastError;
     private String hardware; // e.g. "ESP32-S3-N16R8"
     private String hardwareModel;
+
+    /** true when the firmware can scan the shop network for printers (v2.1.0 and later) */
+    private Boolean scanSupported;
 }

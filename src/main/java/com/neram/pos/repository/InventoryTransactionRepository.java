@@ -12,4 +12,5 @@ public interface InventoryTransactionRepository extends JpaRepository<InventoryT
     List<InventoryTransaction> findTop200ByOrderByCreatedAtDesc();
     List<InventoryTransaction> findByCreatedAtBetween(java.time.LocalDateTime start, java.time.LocalDateTime end);
     List<InventoryTransaction> findByItemIdOrderByCreatedAtDesc(Long itemId);
+    List<InventoryTransaction> findByBillId(Long billId);
 }

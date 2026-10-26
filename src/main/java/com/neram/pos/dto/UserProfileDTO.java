@@ -29,6 +29,9 @@ public class UserProfileDTO {
     private Long outletId;
     private String outletName;
     private String cafeLogoUrl;
+    private Boolean canPrintBill;
+    private Boolean canManageMenu;
+    private Boolean canManageSettings;
     private LocalDateTime accountCreatedAt;
 
     // Linked Employee Details (if any)

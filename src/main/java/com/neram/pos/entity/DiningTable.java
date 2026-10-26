@@ -12,7 +12,8 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class DiningTable {
+@org.hibernate.annotations.Filter(name = "outletScope", condition = "(outlet_id = :outletId OR outlet_id IS NULL)")
+public class DiningTable implements com.neram.pos.tenancy.TenantScoped , com.neram.pos.access.OutletScoped {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -30,12 +31,10 @@ public class DiningTable {
     private Integer displayOrder = 0;
 
     @Column(name = "tenant_id")
-    @Builder.Default
-    private Long tenantId = 1L;
+    private Long tenantId;
 
     @Column(name = "outlet_id")
-    @Builder.Default
-    private Long outletId = 1L;
+    private Long outletId;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -55,4 +54,5 @@ public class DiningTable {
     protected void onUpdate() {
         updatedAt = LocalDateTime.now();
     }
+
 }

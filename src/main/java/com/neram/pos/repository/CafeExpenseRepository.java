@@ -8,7 +8,7 @@ import java.time.LocalDate;
 import java.util.List;
 
 @Repository
-public interface CafeExpenseRepository extends JpaRepository<CafeExpense, Long> {
+public interface CafeExpenseRepository extends JpaRepository<CafeExpense, Long>, org.springframework.data.jpa.repository.JpaSpecificationExecutor<CafeExpense> {
     List<CafeExpense> findByType(CafeExpense.ExpenseType type);
     List<CafeExpense> findByMonthAndYear(Integer month, Integer year);
     List<CafeExpense> findByMonthAndYearOrderByExpenseDateDesc(Integer month, Integer year);
@@ -17,5 +17,6 @@ public interface CafeExpenseRepository extends JpaRepository<CafeExpense, Long> 
     List<CafeExpense> findByIsRecurringTrue();
     List<CafeExpense> findByExpenseDateBetween(LocalDate start, LocalDate end);
     List<CafeExpense> findByExpenseDateBetweenOrderByExpenseDateDesc(LocalDate start, LocalDate end);
+    org.springframework.data.domain.Page<CafeExpense> findByExpenseDateBetweenOrderByExpenseDateDescIdDesc(LocalDate start, LocalDate end, org.springframework.data.domain.Pageable pageable);
     List<CafeExpense> findAllByOrderByExpenseDateDesc();
 }

@@ -34,6 +34,7 @@ class FinancialInputValidationTest {
     @InjectMocks private GstSettingService gstSettingService;
 
     @Mock private SalaryRepository salaryRepository;
+    @Mock private com.neram.pos.repository.SalaryAdvanceRepository salaryAdvanceRepository;
     @Mock private EmployeeRepository employeeRepository;
     @InjectMocks private SalaryService salaryService;
 

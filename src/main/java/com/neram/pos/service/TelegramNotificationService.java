@@ -120,8 +120,17 @@ public class TelegramNotificationService {
 
     public List<TelegramRecipientDTO> getAllManagerRecipients() {
         List<User> activeManagers = userRepository.findByRoleInAndActiveTrue(List.of(User.Role.MANAGER));
+        return activeManagers.stream().map(this::recipientFor).collect(Collectors.toList());
+    }
 
-        return activeManagers.stream().map(manager -> {
+    /** One page of the manager recipients, ordered by user id. */
+    public org.springframework.data.domain.Page<TelegramRecipientDTO> getAllManagerRecipients(org.springframework.data.domain.Pageable pageable) {
+        return userRepository.findByRoleInAndActiveTrue(List.of(User.Role.MANAGER),
+                com.neram.pos.util.PagedResponse.withSort(pageable, org.springframework.data.domain.Sort.by("id"))).map(this::recipientFor);
+    }
+
+    private TelegramRecipientDTO recipientFor(User manager) {
+        {
             TelegramRecipient r = recipientRepository.findByUserId(manager.getId()).orElseGet(() -> {
                 TelegramRecipient newRec = TelegramRecipient.builder()
                         .userId(manager.getId())
@@ -159,7 +168,7 @@ public class TelegramNotificationService {
                     .verifiedAt(r.getVerifiedAt())
                     .lastTestSentAt(r.getLastTestSentAt())
                     .build();
-        }).collect(Collectors.toList());
+        }
     }
 
     @Transactional
@@ -193,11 +202,13 @@ public class TelegramNotificationService {
         auditLogService.log("GENERATE_LINK_CODE", "TELEGRAM_RECIPIENT", r.getId(),
                 "status=" + r.getStatus(), "status=PENDING_VERIFICATION");
 
+        // One Telegram bot serves every cafe, so the code shown to the manager names the cafe it belongs to.
+        String shownCode = com.neram.pos.tenancy.TenantContext.require().code() + TelegramUpdateRouter.CODE_SEPARATOR + code;
         String botUsername = botClient.getBotUsername();
         String botTag = (botUsername != null) ? "@" + botUsername : "the configured bot";
-        String deepLink = (botUsername != null) ? "https://t.me/" + botUsername + "?start=" + code : null;
+        String deepLink = (botUsername != null) ? "https://t.me/" + botUsername + "?start=" + shownCode : null;
         String instructions = String.format("Instruct manager %s to open Telegram, message %s, and send: /link %s (or click the direct link). Code expires in 15 minutes.",
-                manager.getUsername(), botTag, code);
+                manager.getUsername(), botTag, shownCode);
 
         String managerName = getManagerName(manager);
 
@@ -205,7 +216,7 @@ public class TelegramNotificationService {
                 .userId(manager.getId())
                 .username(manager.getUsername())
                 .managerName(managerName)
-                .linkCode(code)
+                .linkCode(shownCode)
                 .expiresAt(expiresAt)
                 .botUsername(botUsername)
                 .instructions(instructions)
@@ -425,6 +436,32 @@ public class TelegramNotificationService {
                 .build();
     }
 
+    /** Time zone configured for the Telegram reports (falls back to India time). */
+    public ZoneId reportZone() {
+        TelegramSetting s = getOrCreateSettings();
+        try { return ZoneId.of(s.getTimezone() != null ? s.getTimezone() : "Asia/Kolkata"); } catch (Exception e) { return ZoneId.of("Asia/Kolkata"); }
+    }
+
+    /** Sends one text to every selected, verified manager who is still active, and logs each delivery. */
+    public Map<String, Object> broadcast(String text, String deliveryType, LocalDate date) {
+        List<TelegramRecipient> verified = recipientRepository.findBySelectedTrueAndStatus(TelegramRecipient.Status.VERIFIED);
+        int sent = 0, failed = 0, eligible = 0;
+        for (TelegramRecipient r : verified) {
+            Optional<User> userOpt = userRepository.findById(r.getUserId());
+            if (userOpt.isEmpty() || !Boolean.TRUE.equals(userOpt.get().getActive())) continue;
+            eligible++;
+            User manager = userOpt.get();
+            boolean ok = false; String err = null;
+            try { botClient.sendMessage(r.getTelegramChatId(), text); ok = true; sent++; }
+            catch (Exception e) { failed++; err = e.getMessage() != null && e.getMessage().length() > 480 ? e.getMessage().substring(0, 480) : e.getMessage(); log.error("Failed to send {} to {}: {}", deliveryType, manager.getUsername(), err); }
+            deliveryLogRepository.save(TelegramDeliveryLog.builder().reportDate(date).recipientId(r.getId()).userId(manager.getId()).managerName(getManagerName(manager))
+                    .chatIdMasked(maskChatId(r.getTelegramChatId())).status(ok ? "SUCCESS" : "FAILED").errorDescription(err).itemsCount(0).deliveryType(deliveryType).sentAt(LocalDateTime.now()).build());
+        }
+        Map<String, Object> out = new HashMap<>();
+        out.put("sent", sent); out.put("failed", failed); out.put("recipients", eligible);
+        return out;
+    }
+
     @Transactional
     public Map<String, Object> executeDailyDispatch(boolean forceManual) {
         TelegramSetting s = getOrCreateSettings();
@@ -507,19 +544,30 @@ public class TelegramNotificationService {
     }
 
     public List<TelegramDeliveryLogDTO> getDeliveryHistory() {
-        return deliveryLogRepository.findTop100ByOrderBySentAtDesc().stream().map(l ->
-                TelegramDeliveryLogDTO.builder()
-                        .id(l.getId())
-                        .reportDate(l.getReportDate())
-                        .managerName(l.getManagerName())
-                        .chatIdMasked(l.getChatIdMasked())
-                        .status(l.getStatus())
-                        .errorDescription(l.getErrorDescription())
-                        .itemsCount(l.getItemsCount())
-                        .deliveryType(l.getDeliveryType())
-                        .sentAt(l.getSentAt())
-                        .build()
-        ).collect(Collectors.toList());
+        return deliveryLogRepository.findTop100ByOrderBySentAtDesc().stream().map(this::toDeliveryDTO).collect(Collectors.toList());
+    }
+
+    /** One page of the delivery history, newest first. */
+    public org.springframework.data.domain.Page<TelegramDeliveryLogDTO> getDeliveryHistory(org.springframework.data.domain.Pageable pageable) {
+        if (pageable == null || pageable.isUnpaged()) {
+            List<TelegramDeliveryLogDTO> latest = getDeliveryHistory();
+            return new org.springframework.data.domain.PageImpl<>(latest, org.springframework.data.domain.Pageable.unpaged(), latest.size());
+        }
+        return deliveryLogRepository.findAllByOrderBySentAtDescIdDesc(pageable).map(this::toDeliveryDTO);
+    }
+
+    private TelegramDeliveryLogDTO toDeliveryDTO(TelegramDeliveryLog l) {
+        return TelegramDeliveryLogDTO.builder()
+                .id(l.getId())
+                .reportDate(l.getReportDate())
+                .managerName(l.getManagerName())
+                .chatIdMasked(l.getChatIdMasked())
+                .status(l.getStatus())
+                .errorDescription(l.getErrorDescription())
+                .itemsCount(l.getItemsCount())
+                .deliveryType(l.getDeliveryType())
+                .sentAt(l.getSentAt())
+                .build();
     }
 
     // ============================================================

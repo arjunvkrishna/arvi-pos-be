@@ -14,6 +14,7 @@ import java.time.LocalDateTime;
 @Builder
 @Entity
 @Table(name = "supplier_invoice_items")
+@org.hibernate.annotations.Filter(name = "outletScope", condition = "(invoice_id IN (SELECT p.id FROM supplier_invoices p WHERE p.outlet_id = :outletId OR p.outlet_id IS NULL))")
 public class SupplierInvoiceItem {
 
     @Id
@@ -58,6 +59,28 @@ public class SupplierInvoiceItem {
 
     @Column(name = "cost_per_volume", precision = 12, scale = 2)
     private java.math.BigDecimal costPerVolume;
+
+    /** PACK when entered in packs (e.g. cases), else UNIT/null. quantity/unitPrice are as entered. */
+    @Column(name = "purchase_mode", length = 10)
+    private String purchaseMode;
+
+    @Column(name = "pack_name", length = 50)
+    private String packName;
+
+    @Column(name = "pack_size")
+    private Double packSize;
+
+    /** Stock units added by this line; null on older rows means same as quantity. */
+    @Column(name = "stock_quantity")
+    private Double stockQuantity;
+
+    /** Optional expiry date of the goods on this line. */
+    @Column(name = "expiry_date")
+    private java.time.LocalDate expiryDate;
+
+    public double stockQty() {
+        return stockQuantity != null ? stockQuantity : (quantity != null ? quantity : 0.0);
+    }
 
     @Column(name = "gst_rate")
     @Builder.Default

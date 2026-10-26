@@ -16,9 +16,14 @@ import java.time.format.DateTimeFormatter;
 public class TelegramScheduler {
 
     private final TelegramNotificationService notificationService;
+    private final com.neram.pos.tenancy.TenantExecutor tenantExecutor;
 
     @Scheduled(cron = "0 * * * * *")
     public void scheduleDailyLowStockReportCheck() {
+        tenantExecutor.forEachActiveTenant("telegram-daily-report", this::checkCurrentTenant);
+    }
+
+    void checkCurrentTenant() {
         try {
             TelegramSetting s = notificationService.getOrCreateSettings();
             if (!Boolean.TRUE.equals(s.getEnabled())) {

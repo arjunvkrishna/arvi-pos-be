@@ -126,8 +126,8 @@ public class StaffDirectKotPrintFlowTest {
         assertEquals(2, sampleBill.getItems().get(0).getPrintedQuantity());
         assertEquals(Bill.Status.KOT_PRINTED, sampleBill.getStatus());
 
-        // Verify ingredient deduction on KOT print
-        verify(recipeService, times(1)).deductIngredientsForOrder(sampleBill);
+        // The kitchen ticket takes NO stock: stock follows the settled bill (payment), see BillStockSyncTest
+        verify(recipeService, never()).settleBill(any());
         verify(auditLogService, times(1)).log(eq("PRINT_KOT"), eq("BILL"), eq(201L), isNull(), contains("Printed Kitchen Order Ticket (KOT)"));
     }
 

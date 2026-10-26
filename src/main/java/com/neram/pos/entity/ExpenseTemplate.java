@@ -16,7 +16,8 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Entity
 @Table(name = "expense_templates")
-public class ExpenseTemplate {
+@org.hibernate.annotations.Filter(name = "outletScope", condition = "(outlet_id = :outletId OR outlet_id IS NULL)")
+public class ExpenseTemplate implements com.neram.pos.access.OutletScoped {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -70,4 +71,7 @@ public class ExpenseTemplate {
     public enum Frequency {
         MONTHLY, WEEKLY, QUARTERLY, YEARLY
     }
+
+    @Column(name = "outlet_id")
+    private Long outletId;
 }

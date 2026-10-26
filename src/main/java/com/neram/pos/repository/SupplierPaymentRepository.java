@@ -13,6 +13,7 @@ import java.util.List;
 public interface SupplierPaymentRepository extends JpaRepository<SupplierPayment, Long> {
     List<SupplierPayment> findByInvoiceId(Long invoiceId);
     List<SupplierPayment> findBySupplierId(Long supplierId);
+    org.springframework.data.domain.Page<SupplierPayment> findBySupplierId(Long supplierId, org.springframework.data.domain.Pageable pageable);
 
     @Query("SELECT sp FROM SupplierPayment sp WHERE sp.supplierId = :supplierId ORDER BY sp.paymentDate DESC")
     List<SupplierPayment> findBySupplierIdOrderByDateDesc(@Param("supplierId") Long supplierId);
@@ -27,4 +28,5 @@ public interface SupplierPaymentRepository extends JpaRepository<SupplierPayment
     java.math.BigDecimal totalPaidForInvoice(@Param("invoiceId") Long invoiceId);
 
     List<SupplierPayment> findByPaymentDateBetweenOrderByPaymentDateDesc(LocalDate from, LocalDate to);
+    org.springframework.data.domain.Page<SupplierPayment> findByPaymentDateBetweenOrderByPaymentDateDescIdDesc(LocalDate from, LocalDate to, org.springframework.data.domain.Pageable pageable);
 }

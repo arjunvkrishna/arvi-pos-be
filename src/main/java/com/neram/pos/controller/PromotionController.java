@@ -5,6 +5,8 @@ import com.neram.pos.dto.PromotionResponseDTO;
 import com.neram.pos.repository.UserRepository;
 import com.neram.pos.service.PromotionService;
 import lombok.RequiredArgsConstructor;
+import com.neram.pos.util.PagedResponse;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -23,8 +25,8 @@ public class PromotionController {
 
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
-    public ResponseEntity<List<PromotionResponseDTO>> getAllPromotions() {
-        return ResponseEntity.ok(promotionService.getAllPromotions());
+    public ResponseEntity<List<PromotionResponseDTO>> getAllPromotions(Pageable pageable) {
+        return PagedResponse.of(promotionService.getAllPromotions(pageable));
     }
 
     @GetMapping("/active")
@@ -42,7 +44,7 @@ public class PromotionController {
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @PreAuthorize("hasAuthority('PERM_MANAGE_MENU')")
     public ResponseEntity<PromotionResponseDTO> createPromotion(
             @RequestBody PromotionRequestDTO request, Authentication auth) {
         Long userId = getUserId(auth);
@@ -51,7 +53,7 @@ public class PromotionController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @PreAuthorize("hasAuthority('PERM_MANAGE_MENU')")
     public ResponseEntity<PromotionResponseDTO> updatePromotion(
             @PathVariable Long id, @RequestBody PromotionRequestDTO request, Authentication auth) {
         String username = auth != null ? auth.getName() : "SYSTEM";
@@ -59,7 +61,7 @@ public class PromotionController {
     }
 
     @PatchMapping("/{id}/toggle-active")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @PreAuthorize("hasAuthority('PERM_MANAGE_MENU')")
     public ResponseEntity<PromotionResponseDTO> toggleActive(
             @PathVariable Long id, Authentication auth) {
         String username = auth != null ? auth.getName() : "SYSTEM";
@@ -67,7 +69,7 @@ public class PromotionController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @PreAuthorize("hasAuthority('PERM_MANAGE_MENU')")
     public ResponseEntity<Map<String, String>> deletePromotion(
             @PathVariable Long id, Authentication auth) {
         String username = auth != null ? auth.getName() : "SYSTEM";

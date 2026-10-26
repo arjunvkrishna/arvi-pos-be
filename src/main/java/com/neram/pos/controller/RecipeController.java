@@ -27,13 +27,13 @@ public class RecipeController {
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @PreAuthorize("hasAuthority('PERM_MANAGE_MENU')")
     public ResponseEntity<RecipeDTO.RecipeResponse> createRecipe(@RequestBody RecipeDTO.RecipeRequest req) {
         return ResponseEntity.ok(recipeService.createRecipe(req));
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @PreAuthorize("hasAuthority('PERM_MANAGE_MENU')")
     public ResponseEntity<RecipeDTO.RecipeResponse> updateRecipe(
             @PathVariable Long id,
             @RequestBody RecipeDTO.RecipeRequest req) {
@@ -41,7 +41,7 @@ public class RecipeController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @PreAuthorize("hasAuthority('PERM_MANAGE_MENU')")
     public ResponseEntity<Void> deleteRecipe(@PathVariable Long id) {
         recipeService.deleteRecipe(id);
         return ResponseEntity.noContent().build();

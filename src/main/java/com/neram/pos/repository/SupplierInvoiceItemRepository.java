@@ -10,6 +10,7 @@ import java.util.List;
 public interface SupplierInvoiceItemRepository extends JpaRepository<SupplierInvoiceItem, Long> {
     List<SupplierInvoiceItem> findByInvoiceId(Long invoiceId);
     void deleteByInvoiceId(Long invoiceId);
+    List<SupplierInvoiceItem> findByInventoryItemIdIn(java.util.Collection<Long> inventoryItemIds);
 
     @org.springframework.data.jpa.repository.Query(
         "SELECT sii.productName, sii.unit, SUM(sii.quantity), SUM(sii.totalPrice) " +

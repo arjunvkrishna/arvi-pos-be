@@ -33,6 +33,7 @@ public class PrinterSettingDTO {
 
     private Boolean autoCut;
     private Boolean logoEnabled;
+    private Boolean paymentQrEnabled;
     private Integer paperWidthMm;
     private String headerTitle;
     private String subheader;

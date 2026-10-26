@@ -2,7 +2,7 @@ package com.neram.pos.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.neram.pos.service.TelegramBotClient;
-import com.neram.pos.service.TelegramNotificationService;
+import com.neram.pos.service.TelegramUpdateRouter;
 import com.neram.pos.service.TelegramPollingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,7 +19,7 @@ import java.util.Map;
 public class TelegramWebhookController {
 
     private final TelegramBotClient botClient;
-    private final TelegramNotificationService notificationService;
+    private final TelegramUpdateRouter updateRouter;
     private final TelegramPollingService pollingService;
 
     @PostMapping("/webhook")
@@ -37,7 +37,7 @@ public class TelegramWebhookController {
         try {
             TelegramBotClient.IncomingTelegramMessage msg = botClient.parseUpdateNode(updateNode);
             if (msg != null) {
-                notificationService.processIncomingTelegramUpdate(
+                updateRouter.route(
                         msg.getText(),
                         msg.getChatId(),
                         msg.getUsername(),

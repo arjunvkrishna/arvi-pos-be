@@ -12,7 +12,7 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Entity
 @Table(name = "categories")
-public class Category {
+public class Category implements com.neram.pos.tenancy.TenantScoped {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -33,7 +33,7 @@ public class Category {
     private Boolean active = true;
 
     @Column(name = "tenant_id")
-    private Long tenantId = 1L;
+    private Long tenantId;
 
     @Column(name = "created_at")
     private LocalDateTime createdAt = LocalDateTime.now();
@@ -45,7 +45,6 @@ public class Category {
         this.icon = icon;
         this.sortOrder = sortOrder;
         this.active = active;
-        this.tenantId = 1L;
         this.createdAt = createdAt;
     }
 }

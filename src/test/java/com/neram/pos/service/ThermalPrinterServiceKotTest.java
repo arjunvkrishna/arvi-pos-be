@@ -1,6 +1,7 @@
 package com.neram.pos.service;
 
 import com.neram.pos.config.DatabaseSchemaEnsurer;
+import com.neram.pos.dto.BillItemResponseDTO;
 import com.neram.pos.dto.PrintResultDTO;
 import com.neram.pos.entity.Bill;
 import com.neram.pos.entity.BillItem;
@@ -582,5 +583,48 @@ public class ThermalPrinterServiceKotTest {
         when(menuItemRepository.findById(501L)).thenReturn(Optional.of(juiceItem));
 
         assertTrue(thermalPrinterService.isJuiceItem(501L, "Lime Juice", defaultSetting));
+    }
+
+    // ---- Kitchen ticket time: shows the latest KOT print / update, not the order creation time ----
+
+    private String kotText(Bill bill, boolean updated) throws Exception {
+        List<BillItemResponseDTO> items = List.of(BillItemResponseDTO.builder()
+                .itemName("Masala Dosa").quantity(1).build());
+        byte[] payload = thermalPrinterService.buildKotPayload(bill, items, defaultSetting, false, updated);
+        return new String(payload, java.nio.charset.StandardCharsets.ISO_8859_1).toLowerCase();
+    }
+
+    @Test
+    void testKotTime_SecondRoundShowsLatestPrintTime_NotOrderCreationTime() throws Exception {
+        sampleBill.setCreatedAt(LocalDateTime.of(2026, 10, 8, 13, 0, 0));      // order started at 1:00 pm
+        sampleBill.setKotPrintedAt(LocalDateTime.of(2026, 10, 8, 13, 30, 0));  // latest KOT printed at 1:30 pm
+
+        String text = kotText(sampleBill, false);
+        assertTrue(text.contains("08/10/2026, 1:30:00 pm"), "ticket must show the latest KOT time");
+        assertFalse(text.contains("1:00:00 pm"), "ticket must not show the order creation time");
+    }
+
+    @Test
+    void testKotTime_UpdatedTicketUsesLatestOfPrintAndUpdate() throws Exception {
+        sampleBill.setCreatedAt(LocalDateTime.of(2026, 10, 8, 13, 0, 0));
+        sampleBill.setKotPrintedAt(LocalDateTime.of(2026, 10, 8, 13, 5, 0));
+        sampleBill.setKotUpdatedAt(LocalDateTime.of(2026, 10, 8, 13, 45, 0));
+        sampleBill.setKotUpdateCount(1);
+        sampleBill.setKotLastChanges("[+1 NEW ITEM] Masala Dosa");
+
+        assertEquals(LocalDateTime.of(2026, 10, 8, 13, 45, 0), ThermalPrinterService.kotTicketTime(sampleBill));
+        assertTrue(kotText(sampleBill, true).contains("1:45:00 pm"));
+
+        // printed after the update -> the print time wins
+        sampleBill.setKotPrintedAt(LocalDateTime.of(2026, 10, 8, 13, 50, 0));
+        assertEquals(LocalDateTime.of(2026, 10, 8, 13, 50, 0), ThermalPrinterService.kotTicketTime(sampleBill));
+    }
+
+    @Test
+    void testKotTime_FallsBackToCreationTimeWhenNeverPrinted() {
+        sampleBill.setCreatedAt(LocalDateTime.of(2026, 10, 8, 13, 0, 0));
+        assertEquals(LocalDateTime.of(2026, 10, 8, 13, 0, 0), ThermalPrinterService.kotTicketTime(sampleBill));
+        sampleBill.setCreatedAt(null);
+        assertNotNull(ThermalPrinterService.kotTicketTime(sampleBill));
     }
 }

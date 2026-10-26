@@ -1,9 +1,12 @@
 package com.neram.pos.controller;
 
+import com.neram.pos.dto.BillLogSummaryDTO;
 import com.neram.pos.dto.BillRequestDTO;
 import com.neram.pos.dto.BillResponseDTO;
 import com.neram.pos.service.BillService;
 import lombok.RequiredArgsConstructor;
+import com.neram.pos.util.PagedResponse;
+import org.springframework.data.domain.Pageable;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -18,6 +21,7 @@ import java.util.List;
 public class BillController {
 
     private final BillService billService;
+    private final com.neram.pos.service.IdempotentOrders idempotentOrders;
     private final com.neram.pos.service.NotificationStreamService notificationStreamService;
 
     @PostMapping
@@ -40,19 +44,50 @@ public class BillController {
 
     @GetMapping("/daily")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
-    public ResponseEntity<List<BillResponseDTO>> getDailyBills(
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-        return ResponseEntity.ok(billService.getDailyBills(date));
+    public ResponseEntity<List<com.neram.pos.dto.BillLogRowDTO>> getDailyBills(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            @RequestParam(required = false) String orderType,
+            @RequestParam(required = false) String staff,
+            @RequestParam(required = false) String q,
+            Pageable pageable) {
+        return PagedResponse.of(billService.getBillLog(false, date, null, null, orderType, staff, q, pageable));
     }
 
     @GetMapping("/monthly")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
-    public ResponseEntity<List<BillResponseDTO>> getMonthlyBills(
+    public ResponseEntity<List<com.neram.pos.dto.BillLogRowDTO>> getMonthlyBills(
+            @RequestParam(required = false) Integer year,
+            @RequestParam(required = false) Integer month,
+            @RequestParam(required = false) String orderType,
+            @RequestParam(required = false) String staff,
+            @RequestParam(required = false) String q,
+            Pageable pageable) {
+        return PagedResponse.of(billService.getBillLog(true, null, year, month, orderType, staff, q, pageable));
+    }
+
+    /** Totals above the Bill Log for the same filters as /daily (mode=daily) or /monthly (mode=monthly). */
+    @GetMapping("/log/summary")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    public ResponseEntity<BillLogSummaryDTO> getBillLogSummary(
+            @RequestParam(defaultValue = "daily") String mode,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            @RequestParam(required = false) Integer year,
+            @RequestParam(required = false) Integer month,
+            @RequestParam(required = false) String orderType,
+            @RequestParam(required = false) String staff,
+            @RequestParam(required = false) String q) {
+        return ResponseEntity.ok(billService.getBillLogSummary("monthly".equalsIgnoreCase(mode), date, year, month, orderType, staff, q));
+    }
+
+    /** Usernames for the Bill Log's staff filter in the chosen day or month. */
+    @GetMapping("/log/staff")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    public ResponseEntity<List<String>> getBillLogStaff(
+            @RequestParam(defaultValue = "daily") String mode,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
             @RequestParam(required = false) Integer year,
             @RequestParam(required = false) Integer month) {
-        int targetYear = year != null ? year : LocalDate.now().getYear();
-        int targetMonth = month != null ? month : LocalDate.now().getMonthValue();
-        return ResponseEntity.ok(billService.getMonthlyBills(targetYear, targetMonth));
+        return ResponseEntity.ok(billService.getBillLogStaff("monthly".equalsIgnoreCase(mode), date, year, month));
     }
 
     @GetMapping("/{id}")
@@ -71,7 +106,7 @@ public class BillController {
     }
 
     @PostMapping("/{id}/print")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER') or hasAuthority('PERM_PRINT_BILL')")
     public ResponseEntity<BillResponseDTO> markAsPrinted(@PathVariable Long id) {
         return ResponseEntity.ok(billService.markAsPrinted(id));
     }
@@ -115,6 +150,22 @@ public class BillController {
         return ResponseEntity.noContent().build();
     }
 
+    /** Ids of the bills the Bill Log may offer a Delete button for (the 5 newest closed bills). */
+    @GetMapping("/deletable-ids")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    public ResponseEntity<List<Long>> getDeletableBillIds() {
+        return ResponseEntity.ok(billService.getDeletableBillIds());
+    }
+
+    /** Soft delete from the Bill Log: only the 5 newest closed bills, reason mandatory, recorded in the audit log. */
+    @PostMapping("/{id}/soft-delete")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    public ResponseEntity<Void> softDeleteBill(@PathVariable Long id, @RequestBody(required = false) java.util.Map<String, Object> body) {
+        Object reason = body != null ? body.get("reason") : null;
+        billService.softDeleteBill(id, reason != null ? String.valueOf(reason) : null);
+        return ResponseEntity.noContent().build();
+    }
+
     // ============================================================
     // TABLE ORDERS & KITCHEN ORDER TICKETS (KOT)
     // Accessible by STAFF (EMPLOYEE), MANAGER, and ADMIN
@@ -122,8 +173,9 @@ public class BillController {
 
     @PostMapping("/order")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER') or hasAuthority('PERM_TAKE_ORDERS')")
-    public ResponseEntity<BillResponseDTO> saveOrUpdateTableOrder(@RequestBody com.neram.pos.dto.TableOrderRequestDTO request) {
-        return ResponseEntity.ok(billService.saveOrUpdateTableOrder(request));
+    public ResponseEntity<BillResponseDTO> saveOrUpdateTableOrder(@RequestBody com.neram.pos.dto.TableOrderRequestDTO request,
+                                                                   @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+        return ResponseEntity.ok(idempotentOrders.save(idempotencyKey, request));
     }
 
     /** SSE signal ("orders-changed") replacing the 3s polling of /tables and /bills/active. Same access rule as /active. */
@@ -219,7 +271,7 @@ public class BillController {
     }
 
     @PostMapping("/{id}/print-bill")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER') or hasAuthority('PERM_PRINT_BILL')")
     public ResponseEntity<BillResponseDTO> printBill(@PathVariable Long id, @RequestBody(required = false) BillRequestDTO request) {
         return ResponseEntity.ok(billService.printBill(id, request));
     }

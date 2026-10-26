@@ -26,7 +26,7 @@ public class SettingController {
     }
 
     @RequestMapping(value = "/public-menu", method = {RequestMethod.PUT, RequestMethod.POST})
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @PreAuthorize("hasAuthority('PERM_MANAGE_SETTINGS')")
     public ResponseEntity<Map<String, Object>> togglePublicMenu(@RequestBody(required = false) Map<String, Object> payload, Principal principal) {
         boolean enabled = false;
         if (payload != null && payload.containsKey("enabled")) {
@@ -48,7 +48,7 @@ public class SettingController {
     }
 
     @PostMapping("/public-menu/toggle")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @PreAuthorize("hasAuthority('PERM_MANAGE_SETTINGS')")
     public ResponseEntity<Map<String, Object>> togglePublicMenuDirect(Principal principal) {
         boolean currentState = publicMenuService.isPublicMenuEnabled();
         boolean newState = !currentState;
@@ -68,7 +68,7 @@ public class SettingController {
     }
 
     @RequestMapping(value = "/parcel-charge", method = {RequestMethod.POST, RequestMethod.PUT})
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @PreAuthorize("hasAuthority('PERM_MANAGE_SETTINGS')")
     public ResponseEntity<Map<String, Object>> updateParcelChargeSetting(@RequestBody(required = false) Map<String, Object> payload, Principal principal) {
         java.math.BigDecimal amount = new java.math.BigDecimal("10.00");
         if (payload != null && payload.containsKey("defaultParcelCharge")) {

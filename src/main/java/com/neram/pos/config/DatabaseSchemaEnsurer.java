@@ -2,31 +2,20 @@ package com.neram.pos.config;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.ApplicationArguments;
-import org.springframework.boot.ApplicationRunner;
-import org.springframework.core.Ordered;
-import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 /**
- * Defensive schema ensurer to guarantee all critical printer_settings and bills
- * columns exist on application boot even if Flyway migrations were previously marked
- * or baselined in legacy/cloned cloud environments.
+ * Defensive schema self-heal for the printer_settings columns, called by the printer service when a query fails.
+ * It acts on the cafe database of the current request (the JdbcTemplate is tenant-routed), so it is never run at
+ * startup, when no cafe is selected; schema creation for new cafes is done by Flyway.
  */
 @Slf4j
 @Component
-@Order(Ordered.LOWEST_PRECEDENCE)
 @RequiredArgsConstructor
-public class DatabaseSchemaEnsurer implements ApplicationRunner {
+public class DatabaseSchemaEnsurer {
 
     private final JdbcTemplate jdbcTemplate;
-
-    @Override
-    public void run(ApplicationArguments args) {
-        log.info("Running application runner database schema verification on boot...");
-        ensureSchema();
-    }
 
     public synchronized void ensureSchema() {
         log.info("Ensuring database schema integrity for printer settings and KOT columns...");
@@ -45,6 +34,23 @@ public class DatabaseSchemaEnsurer implements ApplicationRunner {
                 "updated_at TIMESTAMP NOT NULL DEFAULT NOW())");
 
         // Unquoted columns for printer_settings
+        executeSqlSafe("ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS auto_deduct BOOLEAN NOT NULL DEFAULT TRUE");
+        executeSqlSafe("ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS shelf_life_days INTEGER");
+        executeSqlSafe("ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS expiry_warn_days INTEGER NOT NULL DEFAULT 2");
+        executeSqlSafe("ALTER TABLE supplier_invoice_items ADD COLUMN IF NOT EXISTS expiry_date DATE");
+        executeSqlSafe("ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS reason_type VARCHAR(20)");
+        executeSqlSafe("ALTER TABLE promotions ADD COLUMN IF NOT EXISTS recurring BOOLEAN NOT NULL DEFAULT FALSE");
+        executeSqlSafe("ALTER TABLE promotions ADD COLUMN IF NOT EXISTS days_of_week VARCHAR(20)");
+        executeSqlSafe("ALTER TABLE promotions ADD COLUMN IF NOT EXISTS daily_start TIME");
+        executeSqlSafe("ALTER TABLE promotions ADD COLUMN IF NOT EXISTS daily_end TIME");
+        executeSqlSafe("CREATE TABLE IF NOT EXISTS bill_payments (id BIGSERIAL PRIMARY KEY, bill_id BIGINT NOT NULL REFERENCES bills(id) ON DELETE CASCADE, mode VARCHAR(10) NOT NULL, amount NUMERIC(12,2) NOT NULL, reference VARCHAR(100), created_at TIMESTAMP NOT NULL DEFAULT NOW())");
+        executeSqlSafe("ALTER TABLE bills ADD COLUMN IF NOT EXISTS payment_summary VARCHAR(150)");
+        executeSqlSafe("CREATE TABLE IF NOT EXISTS idempotency_keys (idem_key VARCHAR(80) PRIMARY KEY, bill_id BIGINT NOT NULL, created_at TIMESTAMP NOT NULL DEFAULT NOW())");
+        executeSqlSafe("ALTER TABLE bills ADD COLUMN IF NOT EXISTS tip_amount NUMERIC(12,2) NOT NULL DEFAULT 0");
+        executeSqlSafe("CREATE TABLE IF NOT EXISTS tip_payouts (id BIGSERIAL PRIMARY KEY, staff_id BIGINT NOT NULL, staff_name VARCHAR(100) NOT NULL, amount NUMERIC(12,2) NOT NULL, paid_on DATE NOT NULL, note VARCHAR(200), created_by VARCHAR(100), created_at TIMESTAMP NOT NULL DEFAULT NOW())");
+        executeSqlSafe("CREATE TABLE IF NOT EXISTS expense_budgets (id BIGSERIAL PRIMARY KEY, category VARCHAR(40) NOT NULL UNIQUE, monthly_amount NUMERIC(12,2) NOT NULL, updated_by VARCHAR(100), updated_at TIMESTAMP NOT NULL DEFAULT NOW())");
+        executeSqlSafe("CREATE TABLE IF NOT EXISTS stock_counts (id BIGSERIAL PRIMARY KEY, status VARCHAR(12) NOT NULL DEFAULT 'DRAFT', scope VARCHAR(60), note VARCHAR(300), created_by VARCHAR(100), created_at TIMESTAMP NOT NULL DEFAULT NOW(), applied_by VARCHAR(100), applied_at TIMESTAMP)");
+        executeSqlSafe("CREATE TABLE IF NOT EXISTS stock_count_lines (id BIGSERIAL PRIMARY KEY, count_id BIGINT NOT NULL REFERENCES stock_counts(id) ON DELETE CASCADE, item_id BIGINT NOT NULL, item_name VARCHAR(255) NOT NULL, unit VARCHAR(50), book_qty DOUBLE PRECISION NOT NULL, counted_qty DOUBLE PRECISION, cost_per_unit NUMERIC(12,2) NOT NULL DEFAULT 0)");
         executeSqlSafe("ALTER TABLE printer_settings ADD COLUMN IF NOT EXISTS bill_host VARCHAR(100) NOT NULL DEFAULT '192.168.1.37'");
         executeSqlSafe("ALTER TABLE printer_settings ADD COLUMN IF NOT EXISTS bill_port INT NOT NULL DEFAULT 9100");
         executeSqlSafe("ALTER TABLE printer_settings ADD COLUMN IF NOT EXISTS bill_enabled BOOLEAN NOT NULL DEFAULT TRUE");
@@ -56,6 +62,7 @@ public class DatabaseSchemaEnsurer implements ApplicationRunner {
         executeSqlSafe("ALTER TABLE printer_settings ADD COLUMN IF NOT EXISTS juice_kot_host VARCHAR(100) NOT NULL DEFAULT '192.168.1.42'");
         executeSqlSafe("ALTER TABLE printer_settings ADD COLUMN IF NOT EXISTS juice_kot_port INT NOT NULL DEFAULT 9100");
         executeSqlSafe("ALTER TABLE printer_settings ADD COLUMN IF NOT EXISTS juice_kot_enabled BOOLEAN NOT NULL DEFAULT TRUE");
+        executeSqlSafe("ALTER TABLE printer_settings ADD COLUMN IF NOT EXISTS payment_qr_enabled BOOLEAN NOT NULL DEFAULT TRUE");
         executeSqlSafe("ALTER TABLE printer_settings ADD COLUMN IF NOT EXISTS juice_kot_header_title VARCHAR(150) NOT NULL DEFAULT '*** JUICE ORDER ***'");
         executeSqlSafe("ALTER TABLE printer_settings ADD COLUMN IF NOT EXISTS juice_kot_subheader VARCHAR(500) NOT NULL DEFAULT 'NERAM - JUICE BAR'");
         executeSqlSafe("ALTER TABLE printer_settings ADD COLUMN IF NOT EXISTS juice_kot_footer_message VARCHAR(150) NOT NULL DEFAULT '--- END OF JUICE KOT ---'");
@@ -73,6 +80,7 @@ public class DatabaseSchemaEnsurer implements ApplicationRunner {
         executeSqlSafe("ALTER TABLE \"printer_settings\" ADD COLUMN IF NOT EXISTS \"juice_kot_host\" VARCHAR(100) NOT NULL DEFAULT '192.168.1.42'");
         executeSqlSafe("ALTER TABLE \"printer_settings\" ADD COLUMN IF NOT EXISTS \"juice_kot_port\" INT NOT NULL DEFAULT 9100");
         executeSqlSafe("ALTER TABLE \"printer_settings\" ADD COLUMN IF NOT EXISTS \"juice_kot_enabled\" BOOLEAN NOT NULL DEFAULT TRUE");
+        executeSqlSafe("ALTER TABLE \"printer_settings\" ADD COLUMN IF NOT EXISTS \"payment_qr_enabled\" BOOLEAN NOT NULL DEFAULT TRUE");
         executeSqlSafe("ALTER TABLE \"printer_settings\" ADD COLUMN IF NOT EXISTS \"juice_kot_header_title\" VARCHAR(150) NOT NULL DEFAULT '*** JUICE ORDER ***'");
         executeSqlSafe("ALTER TABLE \"printer_settings\" ADD COLUMN IF NOT EXISTS \"juice_kot_subheader\" VARCHAR(500) NOT NULL DEFAULT 'NERAM - JUICE BAR'");
         executeSqlSafe("ALTER TABLE \"printer_settings\" ADD COLUMN IF NOT EXISTS \"juice_kot_footer_message\" VARCHAR(150) NOT NULL DEFAULT '--- END OF JUICE KOT ---'");
@@ -96,6 +104,10 @@ public class DatabaseSchemaEnsurer implements ApplicationRunner {
         executeSqlSafe("ALTER TABLE \"printer_settings\" ADD COLUMN IF NOT EXISTS \"print_style\" VARCHAR(50) NOT NULL DEFAULT 'CRISP_DARK'");
 
         // Bills KOT tracking columns (unquoted & quoted)
+        executeSqlSafe("ALTER TABLE bills ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP");
+        executeSqlSafe("ALTER TABLE bills ADD COLUMN IF NOT EXISTS deleted_by BIGINT");
+        executeSqlSafe("ALTER TABLE bills ADD COLUMN IF NOT EXISTS deleted_by_name VARCHAR(100)");
+        executeSqlSafe("ALTER TABLE bills ADD COLUMN IF NOT EXISTS delete_reason TEXT");
         executeSqlSafe("ALTER TABLE bills ADD COLUMN IF NOT EXISTS kot_update_count INT NOT NULL DEFAULT 0");
         executeSqlSafe("ALTER TABLE bills ADD COLUMN IF NOT EXISTS kot_updated_at TIMESTAMP");
         executeSqlSafe("ALTER TABLE bills ADD COLUMN IF NOT EXISTS kot_last_changes TEXT");
@@ -144,6 +156,7 @@ public class DatabaseSchemaEnsurer implements ApplicationRunner {
         // Also ensure user permission columns exist
         executeSqlSafe("ALTER TABLE users ADD COLUMN IF NOT EXISTS can_take_orders BOOLEAN NOT NULL DEFAULT TRUE");
         executeSqlSafe("ALTER TABLE users ADD COLUMN IF NOT EXISTS can_manage_inventory BOOLEAN NOT NULL DEFAULT FALSE");
+        executeSqlSafe("ALTER TABLE users ADD COLUMN IF NOT EXISTS can_print_bill BOOLEAN NOT NULL DEFAULT FALSE");
 
         // Ensure employee bank details exist (from develop V34)
         executeSqlSafe("ALTER TABLE employees ADD COLUMN IF NOT EXISTS bank_name VARCHAR(150)");

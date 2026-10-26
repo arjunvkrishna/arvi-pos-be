@@ -6,7 +6,6 @@ import com.neram.pos.service.PrintBridgeService;
 import com.neram.pos.service.ThermalPrinterService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -22,26 +21,15 @@ public class PrintBridgeController {
 
     private final PrintBridgeService printBridgeService;
     private final ThermalPrinterService thermalPrinterService;
+    private final com.neram.pos.service.PrinterScanService printerScanService;
 
-    @Value("${neram.printer.bridge-token:neram-printer-bridge-secret-2024}")
-    private String configuredBridgeToken;
-
-    private boolean isAuthorized(String token) {
-        if (configuredBridgeToken == null || configuredBridgeToken.isBlank()) {
-            return true;
-        }
-        if (token == null || token.isBlank()) {
-            return false;
-        }
-        String clean = token.startsWith("Bearer ") ? token.substring(7).trim() : token.trim();
-        return configuredBridgeToken.trim().equals(clean);
-    }
+    private final com.neram.pos.tenancy.BridgeTokenVerifier bridgeTokenVerifier;
 
     private boolean checkAuth(String bridgeToken, String printBridgeToken, String authHeader) {
         String token = (bridgeToken != null && !bridgeToken.isBlank()) ? bridgeToken
                 : (printBridgeToken != null && !printBridgeToken.isBlank()) ? printBridgeToken
                 : authHeader;
-        return isAuthorized(token);
+        return bridgeTokenVerifier.verify(token);
     }
 
     /**
@@ -70,10 +58,27 @@ public class PrintBridgeController {
             @RequestHeader(value = "X-Print-Bridge-Token", required = false) String printBridgeToken,
             @RequestHeader(value = "Authorization", required = false) String authHeader,
             @RequestParam(value = "bridgeId", defaultValue = "neram-bridge-main") String bridgeId,
-            @RequestParam(value = "timeout", defaultValue = "15") int timeoutSeconds) {
+            @RequestParam(value = "timeout", defaultValue = "15") int timeoutSeconds,
+            @RequestParam(value = "scan", defaultValue = "0") int scanCapable) {
 
         if (!checkAuth(bridgeToken, printBridgeToken, authHeader)) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+
+        if (scanCapable == 1 && timeoutSeconds > 0) {
+            // A bridge that can scan the network also gets "scan for printers" requests. It is offered a waiting scan first;
+            // otherwise the usual job long-poll runs in one-second slices so a new scan request is noticed within a second.
+            long deadline = System.currentTimeMillis() + timeoutSeconds * 1000L;
+            do {
+                var scan = printerScanService.claimPending(bridgeId);
+                if (scan.isPresent()) {
+                    return ResponseEntity.ok(PrintBridgeJobDTO.builder().jobId(scan.get().getId()).printType("SCAN")
+                            .targetPort(scan.get().getPort()).status("SCAN").build());
+                }
+                PrintBridgeJobDTO job = printBridgeService.pollJob(bridgeId, 1);
+                if (job != null) return ResponseEntity.ok(job);
+            } while (System.currentTimeMillis() < deadline);
+            return ResponseEntity.noContent().build();
         }
 
         PrintBridgeJobDTO job = printBridgeService.pollJob(bridgeId, timeoutSeconds);
@@ -81,6 +86,21 @@ public class PrintBridgeController {
             return ResponseEntity.noContent().build();
         }
         return ResponseEntity.ok(job);
+    }
+
+    /** The bridge reports how its network scan is going (and the printers it found). */
+    @PostMapping("/scan/{scanId}/report")
+    public ResponseEntity<Map<String, Object>> reportScan(
+            @PathVariable String scanId,
+            @RequestBody PrinterScanReportDTO report,
+            @RequestHeader(value = "X-Bridge-Token", required = false) String bridgeToken,
+            @RequestHeader(value = "X-Print-Bridge-Token", required = false) String printBridgeToken,
+            @RequestHeader(value = "Authorization", required = false) String authHeader) {
+
+        if (!checkAuth(bridgeToken, printBridgeToken, authHeader)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+        return ResponseEntity.ok(Map.of("scanId", scanId, "accepted", printerScanService.report(scanId, report)));
     }
 
     /**

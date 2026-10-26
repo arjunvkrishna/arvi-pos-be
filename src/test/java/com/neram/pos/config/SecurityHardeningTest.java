@@ -17,7 +17,12 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 
 import java.sql.SQLException;
+import com.neram.pos.tenancy.PlatformAdminService;
+import com.neram.pos.tenancy.TenantRecord;
+import com.neram.pos.tenancy.TenantRegistry;
+
 import java.util.List;
+import java.util.Optional;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -34,7 +39,10 @@ class SecurityHardeningTest {
     private MockHttpServletResponse run(String method, String uri, boolean mustChange) throws Exception {
         JwtTokenProvider provider = mock(JwtTokenProvider.class);
         when(provider.validateToken("tok")).thenReturn(true);
-        when(provider.getUsernameFromToken("tok")).thenReturn("staff");
+        when(provider.getIdentity("tok")).thenReturn(new JwtTokenProvider.TokenIdentity("staff", 5L, "bluedoor", false));
+        TenantRegistry registry = mock(TenantRegistry.class);
+        when(registry.findById(5L)).thenReturn(Optional.of(new TenantRecord(5, "bluedoor", "Blue", "ACTIVE", "PRO", 1,
+                null, null, null, "h", 5432, "db", "u", "e", "e", null, null, null, null)));
         UserDetailsService uds = mock(UserDetailsService.class);
         List<SimpleGrantedAuthority> auth = mustChange
                 ? List.of(new SimpleGrantedAuthority("ROLE_EMPLOYEE"), new SimpleGrantedAuthority(CustomUserDetailsService.PASSWORD_CHANGE_REQUIRED))
@@ -46,7 +54,7 @@ class SecurityHardeningTest {
         req.addHeader("Authorization", "Bearer tok");
         MockHttpServletResponse res = new MockHttpServletResponse();
         FilterChain chain = mock(FilterChain.class);
-        new JwtAuthenticationFilter(provider, uds).doFilter(req, res, chain);
+        new JwtAuthenticationFilter(provider, uds, registry, mock(PlatformAdminService.class), mock(com.neram.pos.access.OutletScopeResolver.class)).doFilter(req, res, chain);
         res.setCommitted(false);
         lastChain = chain;
         return res;

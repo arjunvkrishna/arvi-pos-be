@@ -7,6 +7,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 
 @Data
 @NoArgsConstructor
@@ -49,4 +50,20 @@ public class Promotion {
     @Column(name = "updated_at", nullable = false)
     @Builder.Default
     private LocalDateTime updatedAt = LocalDateTime.now();
+
+    /** Happy hour: when true the promotion only applies on the chosen weekdays between dailyStart and dailyEnd, inside the date range above. */
+    @Column(nullable = false)
+    @Builder.Default
+    private Boolean recurring = false;
+
+    /** ISO weekdays, 1 = Monday ... 7 = Sunday, comma separated. */
+    @Column(name = "days_of_week", length = 20)
+    private String daysOfWeek;
+
+    @Column(name = "daily_start")
+    private LocalTime dailyStart;
+
+    /** When earlier than dailyStart the window runs past midnight. */
+    @Column(name = "daily_end")
+    private LocalTime dailyEnd;
 }

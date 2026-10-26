@@ -22,6 +22,9 @@ public class CafeSummaryDto {
     private String subscriptionPlan;
     private String status;
     private Integer maxOutlets;
+    private String dbName;
+    private String schemaVersion;
+    private String lastError;
     private Long outletsCount;
     private Long usersCount;
     private Long totalBillsCount;

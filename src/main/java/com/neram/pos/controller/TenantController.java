@@ -22,6 +22,8 @@ public class TenantController {
 
     private final TenantRepository tenantRepository;
     private final TenantSecurityService tenantSecurityService;
+    private final com.neram.pos.tenancy.TenantRegistry tenantRegistry;
+    private final com.neram.pos.service.PublicMenuCache publicMenuCache;
 
     @GetMapping("/settings")
     @PreAuthorize("hasAnyRole('SUPER_ADMIN', 'ADMIN', 'CAFE_ADMIN', 'GENERAL_MANAGER', 'MANAGER')")
@@ -34,7 +36,7 @@ public class TenantController {
     }
 
     @PutMapping("/settings")
-    @PreAuthorize("hasAnyRole('SUPER_ADMIN', 'ADMIN', 'CAFE_ADMIN', 'GENERAL_MANAGER', 'MANAGER')")
+    @PreAuthorize("hasAuthority('PERM_MANAGE_SETTINGS')")
     public ResponseEntity<?> updateTenantSettings(@RequestBody TenantSettingsDTO dto) {
         Long tenantId = tenantSecurityService.resolveTenantId(null);
         Tenant tenant = tenantRepository.findById(tenantId)
@@ -55,6 +57,9 @@ public class TenantController {
         if (dto.getGstNumber() != null) {
             tenant.setGstNumber(dto.getGstNumber().trim());
         }
+        if (dto.getTagline() != null) {
+            tenant.setTagline(dto.getTagline().trim());
+        }
         if (dto.getLogoUrl() != null) {
             tenant.setLogoUrl(dto.getLogoUrl().trim());
         }
@@ -67,6 +72,8 @@ public class TenantController {
 
         tenant.setUpdatedAt(LocalDateTime.now());
         Tenant saved = tenantRepository.save(tenant);
+        publicMenuCache.evictCurrentCafe();
+        tenantRegistry.updateContact(saved.getId(), saved.getName(), saved.getContactEmail(), saved.getContactPhone(), saved.getAddress());
         log.info("Tenant {} ({}) updated settings and logo", saved.getId(), saved.getName());
 
         return ResponseEntity.ok(toDTO(saved));
@@ -82,6 +89,7 @@ public class TenantController {
                 .address(t.getAddress())
                 .gstNumber(t.getGstNumber())
                 .logoUrl(t.getLogoUrl())
+                .tagline(t.getTagline())
                 .subscriptionPlan(t.getSubscriptionPlan())
                 .maxOutlets(t.getMaxOutlets())
                 .currency(t.getCurrency())

@@ -18,6 +18,7 @@ public class TenantSettingsDTO {
     private String address;
     private String gstNumber;
     private String logoUrl;
+    private String tagline;
     private String subscriptionPlan;
     private Integer maxOutlets;
     private String currency;

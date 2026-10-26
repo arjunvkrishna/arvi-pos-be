@@ -13,6 +13,7 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Entity
 @Table(name = "salaries")
+@org.hibernate.annotations.Filter(name = "outletScope", condition = "(employee_id IN (SELECT p.id FROM employees p WHERE p.outlet_id = :outletId OR p.outlet_id IS NULL))")
 public class Salary {
 
     @Id

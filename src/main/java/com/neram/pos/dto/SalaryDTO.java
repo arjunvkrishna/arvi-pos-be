@@ -23,6 +23,11 @@ public class SalaryDTO {
     private BigDecimal allowances;
     private BigDecimal deductions;
     private BigDecimal netSalary;
+    /** advances given so far against this salary */
+    private BigDecimal advance;
+    /** what is still to be paid: net salary minus advances */
+    private BigDecimal balance;
+    private java.util.List<SalaryAdvanceDTO> advances;
     private Boolean paid;
     private LocalDate paidDate;
     private String paymentMode;

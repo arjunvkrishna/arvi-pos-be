@@ -258,8 +258,16 @@ class UserServiceRbacAndProfileTest {
         user.setPasswordHash("hashed_OldSecret@123");
         when(userRepository.findByUsername("testuser")).thenReturn(Optional.of(user));
 
-        userService.changeOwnPassword("testuser", "OldSecret@123", "NewSecret@987");
+        com.neram.pos.tenancy.TenantContext.set(new com.neram.pos.tenancy.TenantInfo(5, "bluedoor"));
+        when(refreshTokenService.issue(user)).thenReturn("RAW");
+        String refreshToken;
+        try {
+            refreshToken = userService.changeOwnPassword("testuser", "OldSecret@123", "NewSecret@987");
+        } finally {
+            com.neram.pos.tenancy.TenantContext.clear();
+        }
 
+        assertEquals("bluedoor~RAW", refreshToken, "the refresh token must name its cafe");
         assertEquals("hashed_NewSecret@987", user.getPasswordHash());
         assertFalse(user.getMustChangePassword());
         verify(refreshTokenService).revokeAllForUser(50L);

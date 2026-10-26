@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/notifications")
@@ -123,5 +124,32 @@ public class NotificationController {
         notificationRepository.saveAll(unread);
         notificationStreamService.publishChangedAfterCommit();
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Delete one notification (read or unread). Idempotent: deleting something another device already
+     * removed still returns 204, so a stale list never shows an error.
+     */
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    public ResponseEntity<Void> deleteNotification(@PathVariable Long id) {
+        notificationRepository.findById(id).ifPresent(n -> {
+            notificationRepository.delete(n);
+            auditLogService.log("DELETE_NOTIFICATION", "NOTIFICATION", id, n.getTitle(), null);
+        });
+        notificationStreamService.publishChangedAfterCommit();
+        return ResponseEntity.noContent().build();
+    }
+
+    /** Delete every notification that has already been marked read. Unread notifications are never touched. */
+    @DeleteMapping("/read")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    public ResponseEntity<Map<String, Integer>> deleteReadNotifications() {
+        int deleted = notificationRepository.deleteAllByStatus(SystemNotification.Status.READ);
+        if (deleted > 0) {
+            auditLogService.log("DELETE_READ_NOTIFICATIONS", "NOTIFICATION", null, null, "Deleted " + deleted + " read notification(s)");
+        }
+        notificationStreamService.publishChangedAfterCommit();
+        return ResponseEntity.ok(Map.of("deleted", deleted));
     }
 }

@@ -12,7 +12,8 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Entity
 @Table(name = "inventory_items")
-public class InventoryItem {
+@org.hibernate.annotations.Filter(name = "outletScope", condition = "(outlet_id = :outletId OR outlet_id IS NULL)")
+public class InventoryItem implements com.neram.pos.access.OutletScoped {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -45,6 +46,25 @@ public class InventoryItem {
     @Column(name = "cost_per_volume", precision = 12, scale = 2)
     private java.math.BigDecimal costPerVolume = java.math.BigDecimal.ZERO;
 
+    /** Optional pack: 1 pack = packSize stock units (e.g. case = 12 bottles). */
+    @Column(name = "pack_name", length = 50)
+    private String packName;
+
+    @Column(name = "pack_size")
+    private Double packSize;
+
+    /** false = this item is issued by hand (milk, oil...): selling a dish with a recipe does not reduce its stock. */
+    @Column(name = "auto_deduct", nullable = false)
+    private Boolean autoDeduct = true;
+
+    /** Optional shelf life: goods received on a purchase line without an expiry date expire this many days after the invoice date. */
+    @Column(name = "shelf_life_days")
+    private Integer shelfLifeDays;
+
+    /** How many days before expiry the item is flagged "expiring soon". */
+    @Column(name = "expiry_warn_days", nullable = false)
+    private Integer expiryWarnDays = 2;
+
     private String supplier;
 
     @Column(name = "item_category", length = 50, nullable = false)
@@ -66,4 +86,7 @@ public class InventoryItem {
     public void setVolume(Double v) {
         this.unitVolume = v;
     }
+
+    @Column(name = "outlet_id")
+    private Long outletId;
 }

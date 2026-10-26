@@ -3,6 +3,7 @@ package com.neram.pos.controller;
 import com.neram.pos.dto.MovingDishDTO;
 import com.neram.pos.service.AnalyticsExportService;
 import com.neram.pos.service.AnalyticsService;
+import com.neram.pos.service.InsightsService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpHeaders;
@@ -25,6 +26,7 @@ public class AnalyticsController {
 
     private final AnalyticsService analyticsService;
     private final AnalyticsExportService analyticsExportService;
+    private final InsightsService insightsService;
 
     @GetMapping("/moving-dishes")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
@@ -45,8 +47,43 @@ public class AnalyticsController {
             @org.springframework.web.bind.annotation.RequestParam(required = false)
             @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate startDate,
             @org.springframework.web.bind.annotation.RequestParam(required = false)
+            @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate endDate,
+            // records=false leaves out the report tables (drill-down, supplier spend, purchased products): the screen
+            // loads those one page at a time from /drill-down
+            @org.springframework.web.bind.annotation.RequestParam(required = false, defaultValue = "true") boolean records) {
+        com.neram.pos.dto.ComprehensiveAnalyticsDTO report = analyticsService.getComprehensiveAnalytics(period, startDate, endDate);
+        if (!records) {
+            report.setDrillDown(null);
+            report.setSupplierSpending(java.util.List.of());
+            report.setTopPurchasedProducts(java.util.List.of());
+        }
+        return ResponseEntity.ok(report);
+    }
+
+    /** One page of a report table (sales, expenses, purchases, supplierPayments, salaries, supplierSpending, purchasedProducts). */
+    @GetMapping("/drill-down")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    public ResponseEntity<java.util.List<Object>> getDrillDown(
+            @org.springframework.web.bind.annotation.RequestParam String section,
+            @org.springframework.web.bind.annotation.RequestParam(required = false) String period,
+            @org.springframework.web.bind.annotation.RequestParam(required = false)
+            @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate startDate,
+            @org.springframework.web.bind.annotation.RequestParam(required = false)
+            @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate endDate,
+            org.springframework.data.domain.Pageable pageable) {
+        return com.neram.pos.util.PagedResponse.ofAny(analyticsService.getDrillDownPage(section, period, startDate, endDate, pageable));
+    }
+
+    /** How the period compares with the one before, when and how people buy, what earns money and where money is lost. */
+    @GetMapping("/insights")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    public ResponseEntity<com.neram.pos.dto.InsightsDTO> getInsights(
+            @org.springframework.web.bind.annotation.RequestParam(required = false) String period,
+            @org.springframework.web.bind.annotation.RequestParam(required = false)
+            @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate startDate,
+            @org.springframework.web.bind.annotation.RequestParam(required = false)
             @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate endDate) {
-        return ResponseEntity.ok(analyticsService.getComprehensiveAnalytics(period, startDate, endDate));
+        return ResponseEntity.ok(insightsService.getInsights(period, startDate, endDate));
     }
 
     @GetMapping("/comprehensive-profit")

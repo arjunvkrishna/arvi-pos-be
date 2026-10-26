@@ -13,7 +13,8 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Entity
 @Table(name = "employees")
-public class Employee {
+@org.hibernate.annotations.Filter(name = "outletScope", condition = "(outlet_id = :outletId OR outlet_id IS NULL)")
+public class Employee implements com.neram.pos.tenancy.TenantScoped , com.neram.pos.access.OutletScoped {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

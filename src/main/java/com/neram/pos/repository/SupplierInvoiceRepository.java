@@ -12,8 +12,12 @@ import java.util.List;
 @Repository
 public interface SupplierInvoiceRepository extends JpaRepository<SupplierInvoice, Long> {
     List<SupplierInvoice> findBySupplierId(Long supplierId);
+    org.springframework.data.domain.Page<SupplierInvoice> findBySupplierId(Long supplierId, org.springframework.data.domain.Pageable pageable);
+    org.springframework.data.domain.Page<SupplierInvoice> findByStatus(SupplierInvoice.InvoiceStatus status, org.springframework.data.domain.Pageable pageable);
+    org.springframework.data.domain.Page<SupplierInvoice> findBySupplierIdAndStatus(Long supplierId, SupplierInvoice.InvoiceStatus status, org.springframework.data.domain.Pageable pageable);
     List<SupplierInvoice> findByStatus(SupplierInvoice.InvoiceStatus status);
     List<SupplierInvoice> findByInvoiceDateBetweenOrderByInvoiceDateDesc(LocalDate start, LocalDate end);
+    org.springframework.data.domain.Page<SupplierInvoice> findByInvoiceDateBetweenOrderByInvoiceDateDescIdDesc(LocalDate start, LocalDate end, org.springframework.data.domain.Pageable pageable);
 
     @Query("SELECT si FROM SupplierInvoice si WHERE si.status IN ('UNPAID','PARTIAL','OVERDUE')")
     List<SupplierInvoice> findAllOutstanding();

@@ -2,156 +2,181 @@ package com.neram.pos.service;
 
 import com.neram.pos.dto.CafeSummaryDto;
 import com.neram.pos.dto.CreateCafeRequest;
-import com.neram.pos.entity.Employee;
-import com.neram.pos.entity.Outlet;
-import com.neram.pos.entity.Tenant;
-import com.neram.pos.entity.User;
-import com.neram.pos.repository.EmployeeRepository;
 import com.neram.pos.repository.OutletRepository;
-import com.neram.pos.repository.TenantRepository;
 import com.neram.pos.repository.UserRepository;
+import com.neram.pos.tenancy.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.mockito.junit.jupiter.MockitoSettings;
-import org.mockito.quality.Strictness;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Optional;
+import java.time.OffsetDateTime;
+import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-@ExtendWith(MockitoExtension.class)
-@MockitoSettings(strictness = Strictness.LENIENT)
 class SuperAdminServiceTest {
 
-    @Mock private TenantRepository tenantRepository;
-    @Mock private OutletRepository outletRepository;
-    @Mock private UserRepository userRepository;
-    @Mock private EmployeeRepository employeeRepository;
-    @Mock private PasswordEncoder passwordEncoder;
-    @Mock private JdbcTemplate jdbcTemplate;
-
-    @InjectMocks
-    private SuperAdminService superAdminService;
+    private TenantRegistry registry;
+    private TenantProvisioner provisioner;
+    private TenantMigrator migrator;
+    private TenantCrypto crypto;
+    private TenantDatabaseAdmin dbAdmin;
+    private TenantRoutingDataSource routing;
+    private OutletRepository outletRepository;
+    private UserRepository userRepository;
+    private JdbcTemplate jdbcTemplate;
+    private SuperAdminService service;
 
     @BeforeEach
     void setUp() {
-        when(tenantRepository.save(any(Tenant.class))).thenAnswer(i -> {
-            Tenant t = i.getArgument(0);
-            if (t.getId() == null) t.setId(10L);
-            return t;
-        });
-        when(outletRepository.save(any(Outlet.class))).thenAnswer(i -> {
-            Outlet o = i.getArgument(0);
-            if (o.getId() == null) o.setId(100L);
-            return o;
-        });
-        when(employeeRepository.save(any(Employee.class))).thenAnswer(i -> {
-            Employee e = i.getArgument(0);
-            if (e.getId() == null) e.setId(200L);
-            return e;
-        });
-        when(userRepository.save(any(User.class))).thenAnswer(i -> {
-            User u = i.getArgument(0);
-            if (u.getId() == null) u.setId(300L);
-            return u;
-        });
-        when(passwordEncoder.encode(any())).thenAnswer(i -> "hash_" + i.getArgument(0));
+        TenantProperties props = new TenantProperties();
+        props.setSecretKey(Base64.getEncoder().encodeToString(new byte[32]));
+        crypto = new TenantCrypto(props);
+        registry = mock(TenantRegistry.class);
+        provisioner = mock(TenantProvisioner.class);
+        migrator = mock(TenantMigrator.class);
+        dbAdmin = mock(TenantDatabaseAdmin.class);
+        routing = mock(TenantRoutingDataSource.class);
+        outletRepository = mock(OutletRepository.class);
+        userRepository = mock(UserRepository.class);
+        jdbcTemplate = mock(JdbcTemplate.class);
+        service = new SuperAdminService(registry, provisioner, migrator, crypto, dbAdmin, routing, outletRepository,
+                userRepository, jdbcTemplate);
+    }
+
+    private TenantRecord cafe(long id, String code, String status) {
+        return new TenantRecord(id, code, "Cafe " + code, status, "PRO", 5, "a@b.c", "123", "addr", "pg", 5432,
+                "arvi_" + code, "arvi_" + code + "_app",
+                crypto.encrypt("db-secret-" + code, TenantCrypto.purpose(code, "db-password")),
+                crypto.encrypt("bridge-" + code, TenantCrypto.purpose(code, "bridge-token")),
+                "1", OffsetDateTime.now(), null, OffsetDateTime.now());
     }
 
     @Test
-    @DisplayName("Super Admin creates a new cafe tenant with default outlet and cafe admin")
-    void testCreateCafe_Success() {
+    @DisplayName("Creating a cafe delegates to the provisioner and reports the new database")
+    void createCafe() {
         CreateCafeRequest req = new CreateCafeRequest();
-        req.setName("Blueberry Brew");
-        req.setCode("blueberry-brew");
-        req.setContactEmail("admin@blueberrybrew.com");
-        req.setContactPhone("+91 9998887776");
-        req.setAddress("Kochi Infopark");
-        req.setSubscriptionPlan("ENTERPRISE");
-        req.setMaxOutlets(10);
-        req.setAdminUsername("blueberry_admin");
-        req.setAdminPassword("AdminPass@123");
-        req.setAdminFullName("Blueberry Admin Manager");
+        req.setName("Blue Door");
+        when(provisioner.provision(req, "root")).thenReturn(cafe(5, "bluedoor", "ACTIVE"));
 
-        CafeSummaryDto result = superAdminService.createCafe(req);
+        CafeSummaryDto dto = service.createCafe(req, "root");
 
-        assertNotNull(result);
-        assertEquals(10L, result.getId());
-        assertEquals("Blueberry Brew", result.getName());
-        assertEquals("blueberry-brew", result.getCode());
-        assertEquals("admin@blueberrybrew.com", result.getContactEmail());
-        assertEquals("ACTIVE", result.getStatus());
-        assertEquals(10, result.getMaxOutlets());
-
-        verify(tenantRepository).save(any(Tenant.class));
-        verify(outletRepository).save(any(Outlet.class));
-        verify(employeeRepository).save(any(Employee.class));
-        verify(userRepository).save(any(User.class));
+        assertEquals(5L, dto.getId());
+        assertEquals("arvi_bluedoor", dto.getDbName());
+        assertEquals("ACTIVE", dto.getStatus());
     }
 
     @Test
-    @DisplayName("Create cafe fails if cafe name is missing")
-    void testCreateCafe_MissingNameThrows() {
-        CreateCafeRequest req = new CreateCafeRequest();
-        req.setName("   ");
+    @DisplayName("Cafe metrics come from the cafe's own database")
+    void metricsAreReadInsideTheCafesContext() {
+        when(registry.findAll()).thenReturn(List.of(cafe(5, "bluedoor", "ACTIVE")));
+        when(outletRepository.count()).thenAnswer(i -> {
+            assertEquals(5L, TenantContext.requireId());
+            return 3L;
+        });
+        when(userRepository.count()).thenReturn(8L);
+        when(jdbcTemplate.queryForObject(contains("count(*)"), eq(Long.class))).thenReturn(150L);
+        when(jdbcTemplate.queryForObject(contains("SUM(net_amount)"), eq(BigDecimal.class))).thenReturn(new BigDecimal("75420.50"));
 
-        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> superAdminService.createCafe(req));
-        assertTrue(ex.getMessage().contains("Cafe name is required"));
-        verify(tenantRepository, never()).save(any());
+        CafeSummaryDto s = service.getAllCafes().get(0);
+
+        assertEquals(3L, s.getOutletsCount());
+        assertEquals(8L, s.getUsersCount());
+        assertEquals(150L, s.getTotalBillsCount());
+        assertEquals(new BigDecimal("75420.50"), s.getTotalGmv());
+        assertTrue(TenantContext.current().isEmpty());
     }
 
     @Test
-    @DisplayName("Create cafe fails if admin username is already taken")
-    void testCreateCafe_DuplicateAdminUsernameThrows() {
-        CreateCafeRequest req = new CreateCafeRequest();
-        req.setName("Cafe Mocha");
-        req.setAdminUsername("existing_user");
-        when(userRepository.existsByUsername("existing_user")).thenReturn(true);
+    @DisplayName("One broken cafe database does not break the cafe list")
+    void aBrokenCafeIsListedWithZeroMetrics() {
+        when(registry.findAll()).thenReturn(List.of(cafe(5, "bluedoor", "ACTIVE"), cafe(6, "greenleaf", "ACTIVE")));
+        when(outletRepository.count()).thenThrow(new RuntimeException("db down")).thenReturn(2L);
 
-        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> superAdminService.createCafe(req));
-        assertTrue(ex.getMessage().contains("already taken"));
-        verify(tenantRepository, never()).save(any());
+        List<CafeSummaryDto> list = service.getAllCafes();
+
+        assertEquals(2, list.size());
+        assertEquals(0L, list.get(0).getOutletsCount());
     }
 
     @Test
-    @DisplayName("GetAllCafes aggregates tenant metrics and outlets count")
-    void testGetAllCafes_MetricsAggregation() {
-        Tenant t1 = Tenant.builder()
-                .id(1L)
-                .name("Central Cafe")
-                .code("central-cafe")
-                .status("ACTIVE")
-                .maxOutlets(5)
-                .createdAt(LocalDateTime.now())
-                .build();
-        when(tenantRepository.findAll()).thenReturn(List.of(t1));
-        when(outletRepository.countByTenantId(1L)).thenReturn(3L);
-        when(jdbcTemplate.queryForObject(contains("users"), eq(Long.class), eq(1L))).thenReturn(8L);
-        when(jdbcTemplate.queryForObject(contains("bills"), eq(Long.class), eq(1L))).thenReturn(150L);
-        when(jdbcTemplate.queryForObject(contains("SUM(net_amount)"), eq(BigDecimal.class), eq(1L))).thenReturn(new BigDecimal("75420.50"));
+    void onlyActiveAndSuspendedAreSettableAndProvisioningCafesAreProtected() {
+        when(registry.findById(5L)).thenReturn(Optional.of(cafe(5, "bluedoor", "ACTIVE")));
+        when(registry.findById(9L)).thenReturn(Optional.of(cafe(9, "half", "PROVISIONING")));
 
-        List<CafeSummaryDto> cafes = superAdminService.getAllCafes();
-        assertNotNull(cafes);
-        assertEquals(1, cafes.size());
-        CafeSummaryDto summary = cafes.get(0);
-        assertEquals("Central Cafe", summary.getName());
-        assertEquals(3L, summary.getOutletsCount());
-        assertEquals(8L, summary.getUsersCount());
-        assertEquals(150L, summary.getTotalBillsCount());
-        assertEquals(new BigDecimal("75420.50"), summary.getTotalGmv());
+        assertThrows(IllegalArgumentException.class, () -> service.updateCafe(5L, Map.of("status", "DELETED"), "root"));
+        assertThrows(IllegalArgumentException.class, () -> service.updateCafe(5L, Map.of("maxOutlets", 0), "root"));
+        assertThrows(IllegalArgumentException.class, () -> service.updateCafe(9L, Map.of("status", "ACTIVE"), "root"));
+    }
+
+    @Test
+    void suspendingIsAuditedAndMirroredIntoTheCafeDatabase() {
+        when(registry.findById(5L)).thenReturn(Optional.of(cafe(5, "bluedoor", "ACTIVE")));
+
+        service.updateCafe(5L, Map.of("status", "SUSPENDED", "maxOutlets", 9), "root");
+
+        verify(registry).updateProfile(eq(5L), anyString(), any(), any(), any(), eq("PRO"), eq(9));
+        verify(registry).updateStatus(5L, "SUSPENDED", null);
+        verify(registry).audit(5L, "STATUS_SUSPENDED", "root", "was ACTIVE");
+        verify(jdbcTemplate).update(contains("UPDATE tenants"), any(Object[].class));
+    }
+
+    @Test
+    void revealingDatabaseCredentialsReturnsThePlaintextAndLeavesAnAuditTrail() {
+        when(registry.findById(5L)).thenReturn(Optional.of(cafe(5, "bluedoor", "ACTIVE")));
+
+        Map<String, Object> creds = service.revealDbCredentials(5L, "root");
+
+        assertEquals("db-secret-bluedoor", creds.get("password"));
+        assertEquals("arvi_bluedoor", creds.get("database"));
+        assertEquals("arvi_bluedoor_app", creds.get("username"));
+        verify(registry).audit(eq(5L), eq("DB_CREDENTIALS_REVEALED"), eq("root"), anyString());
+    }
+
+    @Test
+    void rotatingThePasswordChangesPostgresStoresItEncryptedAndRebuildsThePool() throws Exception {
+        when(registry.findById(5L)).thenReturn(Optional.of(cafe(5, "bluedoor", "ACTIVE")));
+        when(dbAdmin.generatePassword()).thenReturn("N".repeat(32));
+
+        service.rotateDbPassword(5L, "root");
+
+        org.mockito.InOrder order = inOrder(dbAdmin, registry, routing);
+        order.verify(dbAdmin).changePassword("arvi_bluedoor_app", "N".repeat(32));
+        org.mockito.ArgumentCaptor<String> stored = org.mockito.ArgumentCaptor.forClass(String.class);
+        order.verify(registry).updateDbPassword(eq(5L), stored.capture());
+        order.verify(routing).evict(5L);
+        assertEquals("N".repeat(32), crypto.decrypt(stored.getValue(), TenantCrypto.purpose("bluedoor", "db-password")));
+    }
+
+    @Test
+    void ifPostgresRejectsTheNewPasswordTheStoredOneIsLeftAlone() throws Exception {
+        when(registry.findById(5L)).thenReturn(Optional.of(cafe(5, "bluedoor", "ACTIVE")));
+        when(dbAdmin.generatePassword()).thenReturn("N".repeat(32));
+        doThrow(new java.sql.SQLException("no")).when(dbAdmin).changePassword(anyString(), anyString());
+
+        assertThrows(IllegalStateException.class, () -> service.rotateDbPassword(5L, "root"));
+
+        verify(registry, never()).updateDbPassword(anyLong(), anyString());
+        verify(routing, never()).evict(anyLong());
+    }
+
+    @Test
+    void bridgeTokensCanBeRevealedAndRotatedPerCafe() {
+        when(registry.findById(5L)).thenReturn(Optional.of(cafe(5, "bluedoor", "ACTIVE")));
+        when(dbAdmin.generateToken()).thenReturn("T".repeat(40));
+
+        assertEquals("bridge-bluedoor", service.revealBridgeToken(5L, "root").get("bridgeToken"));
+        assertEquals("T".repeat(40), service.rotateBridgeToken(5L, "root").get("bridgeToken"));
+        verify(registry).updateBridgeToken(eq(5L), startsWith("v1:"));
+    }
+
+    @Test
+    void unknownCafeIsReportedAsNotFound() {
+        when(registry.findById(404L)).thenReturn(Optional.empty());
+        assertThrows(NoSuchElementException.class, () -> service.getCafe(404L));
     }
 }

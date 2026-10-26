@@ -62,9 +62,22 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class ThermalPrinterService {
 
-    private volatile byte[] cachedLogoRaster80mm = null;
-    private volatile byte[] cachedLogoRaster58mm = null;
-    private volatile boolean logoLoadAttempted = false;
+    // Printer-ready (ESC/POS) versions of each cafe's/branch's uploaded logo and payment QR, keyed by cafe, branch,
+    // upload time, paper width and size, so a re-upload takes effect at once and cafes never share a picture.
+    private final java.util.Map<String, byte[]> imageRasterCache = java.util.Collections.synchronizedMap(
+            new java.util.LinkedHashMap<>(16, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(java.util.Map.Entry<String, byte[]> eldest) {
+                    return size() > 200;
+                }
+            });
+
+    private BrandingService brandingService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setBrandingService(BrandingService brandingService) {
+        this.brandingService = brandingService;
+    }
 
     private final PrinterSettingRepository printerSettingRepository;
     private final BillRepository billRepository;
@@ -115,6 +128,14 @@ public class ThermalPrinterService {
     @Value("${neram.printer.bridge-token:neram-printer-bridge-secret-2024}")
     private String configuredBridgeToken;
 
+    /**
+     * Whether this server may open sockets to printer addresses itself. Off for the multi-cafe cloud service: a
+     * cafe's printer address is user input, so connecting from the server would let a cafe admin probe the hosting
+     * network. Cafes print through their own bridge on their own LAN. Only for a single-site, on-premise install.
+     */
+    @Value("${neram.printer.direct-enabled:false}")
+    private boolean directPrintEnabled;
+
     private static final int LINE_WIDTH_80MM = 48; // standard 80mm ESC/POS characters per line (Font A)
     private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm:ss");
 
@@ -134,9 +155,11 @@ public class ThermalPrinterService {
     private static final byte[] CMD_INVERT_ON = new byte[]{0x1D, 0x42, 0x01};    // GS B 1 (White on Black Reverse ON)
     private static final byte[] CMD_INVERT_OFF = new byte[]{0x1D, 0x42, 0x00};   // GS B 0 (White on Black Reverse OFF)
 
-    private volatile boolean envInitialized = false;
+    // Env printer overrides are a single-site feature. With one database per cafe they would be applied to whichever
+    // cafe happened to call first, so they are disabled; each cafe configures its printers in its own settings.
+    private volatile boolean envInitialized = true;
 
-    private PrinterSetting buildDefaultSettings() {
+    private PrinterSetting buildDefaultSettings(Long id, Long outletId) {
         String initialBillHost = (envBillHost != null && !envBillHost.isBlank()) ? envBillHost.trim()
                 : ((envHost != null && !envHost.isBlank()) ? envHost.trim() : "192.168.1.47");
         int initialBillPort = envBillPort > 0 ? envBillPort : (envPort > 0 ? envPort : 9100);
@@ -147,7 +170,8 @@ public class ThermalPrinterService {
         boolean initialKotEnabled = envKotEnabled != null ? envKotEnabled : true;
 
         PrinterSetting setting = PrinterSetting.builder()
-                .id(1L)
+                .id(id)
+                .outletId(outletId)
                 .host(initialBillHost)
                 .port(initialBillPort)
                 .enabled(initialBillEnabled)
@@ -159,6 +183,7 @@ public class ThermalPrinterService {
                 .kotEnabled(initialKotEnabled)
                 .autoCut(true)
                 .logoEnabled(true)
+                .paymentQrEnabled(true)
                 .paperWidthMm(80)
                 .headerTitle("NERAM")
                 .subheader("Where time tastes better")
@@ -190,18 +215,44 @@ public class ThermalPrinterService {
      * so client configuration in .env always takes precedence on startup/change.
      * Contains automatic self-healing if columns or tables were missing in PostgreSQL.
      */
+    /**
+     * The printer settings row of the branch in context (row id = outlet id). A branch without one starts as a copy
+     * of the first branch's settings. With no branch selected (whole-cafe view) the first branch's row is used.
+     */
+    private PrinterSetting loadBranchSettings() {
+        Long outletId = com.neram.pos.access.OutletContext.current().filter(id -> id != com.neram.pos.access.OutletContext.NO_OUTLET).orElse(null);
+        if (outletId == null) {
+            return printerSettingRepository.findById(1L)
+                    .or(() -> printerSettingRepository.findFirstByOrderByIdAsc())
+                    .orElseGet(() -> buildDefaultSettings(1L, null));
+        }
+        return printerSettingRepository.findById(outletId).orElseGet(() -> {
+            PrinterSetting template = com.neram.pos.access.OutletContext.callUnrestricted(
+                    () -> printerSettingRepository.findFirstByOrderByIdAsc().orElse(null));
+            if (template == null) {
+                return buildDefaultSettings(outletId, outletId);
+            }
+            PrinterSetting copy = new PrinterSetting();
+            org.springframework.beans.BeanUtils.copyProperties(template, copy);
+            copy.setId(outletId);
+            copy.setOutletId(outletId);
+            copy.setUpdatedAt(LocalDateTime.now());
+            return printerSettingRepository.save(copy);
+        });
+    }
+
     public PrinterSetting getSettings() {
         PrinterSetting s;
         try {
-            s = printerSettingRepository.findById(1L).orElseGet(this::buildDefaultSettings);
+            s = loadBranchSettings();
         } catch (Exception ex) {
             log.error("Failed to query printer_settings (possible schema mismatch in DB): {}. Performing emergency self-healing...", ex.getMessage());
             databaseSchemaEnsurer.ensureSchema();
             try {
-                s = printerSettingRepository.findById(1L).orElseGet(this::buildDefaultSettings);
+                s = loadBranchSettings();
             } catch (Exception ex2) {
                 log.error("Emergency self-heal query retry failed: {}. Falling back to transient in-memory settings.", ex2.getMessage());
-                return buildDefaultSettings();
+                return buildDefaultSettings(1L, null);
             }
         }
 
@@ -338,6 +389,7 @@ public class ThermalPrinterService {
                 .juiceKotEnabled(s.getJuiceKotEnabled() != null ? s.getJuiceKotEnabled() : true)
                 .autoCut(s.getAutoCut())
                 .logoEnabled(s.getLogoEnabled() != null ? s.getLogoEnabled() : true)
+                .paymentQrEnabled(s.getPaymentQrEnabled() != null ? s.getPaymentQrEnabled() : true)
                 .paperWidthMm(s.getPaperWidthMm())
                 .headerTitle(s.getHeaderTitle())
                 .subheader(s.getSubheader())
@@ -413,6 +465,7 @@ public class ThermalPrinterService {
 
         if (dto.getAutoCut() != null) s.setAutoCut(dto.getAutoCut());
         if (dto.getLogoEnabled() != null) s.setLogoEnabled(dto.getLogoEnabled());
+        if (dto.getPaymentQrEnabled() != null) s.setPaymentQrEnabled(dto.getPaymentQrEnabled());
         if (dto.getPaperWidthMm() != null && dto.getPaperWidthMm() > 0) s.setPaperWidthMm(dto.getPaperWidthMm());
         if (dto.getHeaderTitle() != null) s.setHeaderTitle(dto.getHeaderTitle().trim());
         if (dto.getSubheader() != null) s.setSubheader(dto.getSubheader().trim());
@@ -439,11 +492,7 @@ public class ThermalPrinterService {
         if (dto.getPrintStyle() != null && !dto.getPrintStyle().isBlank()) s.setPrintStyle(dto.getPrintStyle().trim());
 
         if (logoSettingsChanged) {
-            synchronized (this) {
-                cachedLogoRaster80mm = null;
-                cachedLogoRaster58mm = null;
-                logoLoadAttempted = false;
-            }
+            imageRasterCache.clear();
         }
 
         s.setUpdatedAt(LocalDateTime.now());
@@ -535,12 +584,22 @@ public class ThermalPrinterService {
         }
 
         // 2. Direct Socket connection test (Local network mode)
-        String cacheKey = targetName + "|" + targetHost + ":" + targetPort;
+        String cacheKey = com.neram.pos.tenancy.TenantContext.currentId().orElse(0L) + "|" + targetName + "|" + targetHost + ":" + targetPort;
         if (allowCached) {
             CachedProbe cached = directProbeCache.get(cacheKey);
             if (cached != null && System.currentTimeMillis() - cached.at() < DIRECT_PROBE_CACHE_MS) {
                 return cached.result();
             }
+        }
+        if (!directPrintEnabled) {
+            return PrintResultDTO.builder()
+                    .success(false)
+                    .message(targetName + " status is only known while your print bridge is connected.")
+                    .host(targetHost)
+                    .port(targetPort)
+                    .printType("STATUS_CHECK")
+                    .status("UNKNOWN")
+                    .build();
         }
         PrintResultDTO probed = probeDirect(targetName, targetHost, targetPort);
         directProbeCache.put(cacheKey, new CachedProbe(System.currentTimeMillis(), probed));
@@ -699,6 +758,10 @@ public class ThermalPrinterService {
         }
     }
 
+    private Long branchOfBill(Long billId) {
+        return billId == null ? null : billRepository.findById(billId).map(Bill::getOutletId).orElse(null);
+    }
+
     public PrintResultDTO printBill(Long billId) {
         return printBill(billId, null);
     }
@@ -708,6 +771,13 @@ public class ThermalPrinterService {
      */
     @Transactional
     public PrintResultDTO printBill(Long billId, String idempotencyKey) {
+        // An owner/main manager looking at the whole cafe prints with the settings and printers of the bill's branch.
+        if (com.neram.pos.access.OutletContext.current().isEmpty()) {
+            Long branch = branchOfBill(billId);
+            if (branch != null) {
+                return com.neram.pos.access.OutletContext.callAs(branch, () -> printBill(billId, idempotencyKey));
+            }
+        }
         PrinterSetting s = getSettings();
         String billHost = (s.getBillHost() != null && !s.getBillHost().isBlank()) ? s.getBillHost() : s.getHost();
         int billPort = (s.getBillPort() != null && s.getBillPort() > 0) ? s.getBillPort() : s.getPort();
@@ -908,8 +978,23 @@ public class ThermalPrinterService {
 
             buffer.write((divider('=') + "\n").getBytes(StandardCharsets.UTF_8));
             String payMode = (bill.getStatus() == Bill.Status.BILL_PRINTED) ? "PENDING" : (bill.getPaymentMode() != null ? bill.getPaymentMode().name() : "CASH");
+            if (bill.getStatus() != Bill.Status.BILL_PRINTED && bill.getPaymentSummary() != null) {
+                buffer.write(formatTwoColumns("Payment Mode:", "SPLIT").getBytes(StandardCharsets.UTF_8));
+                for (String part : bill.getPaymentSummary().split(" \\+ ")) buffer.write(formatTwoColumns("  " + part.substring(0, part.indexOf(' ')), part.substring(part.indexOf(' ') + 1).replace("₹", "Rs. ")).getBytes(StandardCharsets.UTF_8));
+            } else
             buffer.write(formatTwoColumns("Payment Mode:", payMode).getBytes(StandardCharsets.UTF_8));
             buffer.write((divider('-') + "\n").getBytes(StandardCharsets.UTF_8));
+
+            // Payment QR (neram-qr.png): scan to pay by UPI, between the payment mode and the thank-you footer (can be switched off in the printer settings)
+            byte[] payQr = Boolean.FALSE.equals(s.getPaymentQrEnabled()) ? null : getPaymentQrRasterBytes(s.getPaperWidthMm() != null ? s.getPaperWidthMm() : 80);
+            if (payQr != null) {
+                buffer.write(CMD_ALIGN_CENTER);
+                buffer.write(CMD_BOLD_ON);
+                buffer.write("SCAN TO PAY (UPI)\n".getBytes(StandardCharsets.UTF_8));
+                buffer.write(CMD_BOLD_OFF);
+                buffer.write(payQr);
+                buffer.write("\n".getBytes(StandardCharsets.UTF_8));
+            }
 
             // Footer
             buffer.write(CMD_ALIGN_CENTER);
@@ -1031,7 +1116,25 @@ public class ThermalPrinterService {
     /**
      * Build ESC/POS raster payload for a KOT slip (Kitchen or Juice)
      */
+    /**
+     * The time to print on a kitchen ticket: the most recent of "KOT printed" and "order updated",
+     * i.e. the moment of the latest kitchen dispatch. Falls back to the order creation time, then now.
+     */
+    public static LocalDateTime kotTicketTime(Bill bill) {
+        LocalDateTime printed = bill.getKotPrintedAt();
+        LocalDateTime updated = bill.getKotUpdatedAt();
+        LocalDateTime latest = (printed != null && updated != null) ? (printed.isAfter(updated) ? printed : updated)
+                : (printed != null ? printed : updated);
+        if (latest != null) return latest;
+        return bill.getCreatedAt() != null ? bill.getCreatedAt() : LocalDateTime.now(ZoneId.of("Asia/Kolkata"));
+    }
+
     public byte[] buildKotPayload(Bill bill, List<BillItemResponseDTO> itemsToPrint, PrinterSetting s, boolean isJuiceKot, boolean isUpdatedKot) throws IOException {
+        return buildKotPayload(bill, itemsToPrint, s, isJuiceKot, isUpdatedKot, false);
+    }
+
+    /** {@code reprint}: a copy of a ticket the kitchen already received (or lost): same body, marked REPRINT at the top. */
+    public byte[] buildKotPayload(Bill bill, List<BillItemResponseDTO> itemsToPrint, PrinterSetting s, boolean isJuiceKot, boolean isUpdatedKot, boolean reprint) throws IOException {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         buffer.write(CMD_INIT);
 
@@ -1088,6 +1191,12 @@ public class ThermalPrinterService {
                 buffer.write((trimmed + "\n").getBytes(StandardCharsets.UTF_8));
             }
         }
+        if (reprint) {
+            buffer.write(CMD_BOLD_ON);
+            buffer.write("*** REPRINT ***\n".getBytes(StandardCharsets.UTF_8));
+            buffer.write(CMD_BOLD_OFF);
+            buffer.write(("Copy printed " + LocalDateTime.now(ZoneId.of("Asia/Kolkata")).format(KOT_REPRINT_TIME) + "\n").getBytes(StandardCharsets.UTF_8));
+        }
         if (isUpdatedKot) {
             buffer.write(CMD_BOLD_ON);
             buffer.write("** ATTENTION: ORDER MODIFIED **\n".getBytes(StandardCharsets.UTF_8));
@@ -1133,9 +1242,11 @@ public class ThermalPrinterService {
         buffer.write(CMD_ALIGN_LEFT);
         String kotRef = bill.getKotNumber() != null ? bill.getKotNumber() : (bill.getBillNumber() != null ? bill.getBillNumber() : "NRM-0000");
 
-        LocalDateTime createdDt = bill.getCreatedAt() != null ? bill.getCreatedAt() : LocalDateTime.now(ZoneId.of("Asia/Kolkata"));
+        // The ticket shows when THIS kitchen ticket was printed, not when the order was first created,
+        // so a second round for the same table printed at 1:30 reads 1:30 even though the order started at 1:00.
+        LocalDateTime ticketDt = kotTicketTime(bill);
         DateTimeFormatter istFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy, h:mm:ss a", Locale.ENGLISH);
-        String formattedDt = createdDt.format(istFormatter).toLowerCase(Locale.ENGLISH);
+        String formattedDt = ticketDt.format(istFormatter).toLowerCase(Locale.ENGLISH);
 
         buffer.write(formatTwoColumns("REF: " + kotRef, formattedDt).getBytes(StandardCharsets.UTF_8));
 
@@ -1253,6 +1364,63 @@ public class ThermalPrinterService {
      */
     @Transactional
     public PrintResultDTO printKot(Long billId, String idempotencyKey) {
+        // An owner/main manager looking at the whole cafe prints with the settings and printers of the bill's branch.
+        if (com.neram.pos.access.OutletContext.current().isEmpty()) {
+            Long branch = branchOfBill(billId);
+            if (branch != null) {
+                return com.neram.pos.access.OutletContext.callAs(branch, () -> printKot(billId, idempotencyKey));
+            }
+        }
+        return printKotInternal(billId, idempotencyKey, false);
+    }
+
+    private static final java.time.format.DateTimeFormatter KOT_REPRINT_TIME = java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy, hh:mm a", Locale.ENGLISH);
+    /** A reprint of the same order cannot be repeated within this time (a double tap must not print two copies). */
+    static final long KOT_REPRINT_COOLDOWN_MS = 15_000L;
+    /** Bill ids repeat across cafes (each has its own database), so cooldowns are keyed by cafe + bill. */
+    private static String reprintKey(Long billId) {
+        return com.neram.pos.tenancy.TenantContext.currentId().orElse(0L) + ":" + billId;
+    }
+
+    private final java.util.concurrent.ConcurrentHashMap<String, Long> lastKotReprint = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Prints the last kitchen ticket of an order that is being prepared once more (the printer restarted and the ticket never came
+     * out). The ticket has the same body as the one sent (the latest round) and a REPRINT marker. It changes nothing on the order:
+     * not its status, nor what counts as already sent to the kitchen, so the normal flow carries on exactly as before.
+     */
+    public PrintResultDTO reprintKot(Long billId) {
+        // An owner/main manager looking at the whole cafe prints with the settings and printers of the bill's branch.
+        if (com.neram.pos.access.OutletContext.current().isEmpty()) {
+            Long branch = branchOfBill(billId);
+            if (branch != null) {
+                return com.neram.pos.access.OutletContext.callAs(branch, () -> reprintKot(billId));
+            }
+        }
+        Bill bill = billRepository.findById(billId)
+                .orElseThrow(() -> new IllegalArgumentException("Order not found with id: " + billId));
+        if (bill.getStatus() == Bill.Status.KOT_REQUESTED) {
+            throw new IllegalStateException("The kitchen ticket for this order is already waiting to print.");
+        }
+        if (bill.getStatus() != Bill.Status.KOT_PRINTED || bill.getKotPrintedAt() == null) {
+            throw new IllegalStateException(bill.getStatus() == Bill.Status.ACTIVE
+                    ? "This order has not been sent to the kitchen yet. Use Send to Kitchen."
+                    : "A kitchen ticket can only be reprinted while the order is being prepared.");
+        }
+        long now = System.currentTimeMillis();
+        Long last = lastKotReprint.get(reprintKey(billId));
+        if (last != null && now - last < KOT_REPRINT_COOLDOWN_MS) {
+            throw new IllegalStateException("A reprint was just sent for this order. Please wait a few seconds.");
+        }
+        lastKotReprint.put(reprintKey(billId), now);
+        if (lastKotReprint.size() > 500) lastKotReprint.entrySet().removeIf(e -> now - e.getValue() > KOT_REPRINT_COOLDOWN_MS);
+
+        String key = "KOT_" + bill.getId() + "_v" + (bill.getKotUpdateCount() != null ? bill.getKotUpdateCount() : 0) + "_RP" + now;
+        log.info("Reprinting the kitchen ticket of order #{} (key {})", bill.getBillNumber(), key);
+        return printKotInternal(billId, key, true);
+    }
+
+    private PrintResultDTO printKotInternal(Long billId, String idempotencyKey, boolean reprint) {
         PrinterSetting s = getSettings();
         String kotHost = (s.getKotHost() != null && !s.getKotHost().isBlank()) ? s.getKotHost() : "192.168.1.37";
         int kotPort = (s.getKotPort() != null && s.getKotPort() > 0) ? s.getKotPort() : 9100;
@@ -1287,8 +1455,8 @@ public class ThermalPrinterService {
             return printCancelledKot(billId, bill.getVoidReason(), effectiveKey);
         }
 
-        // Initial KOT print: record kotPrintedAt
-        if (bill.getKotPrintedAt() == null) {
+        // Initial KOT print: record kotPrintedAt (a reprint never touches the order)
+        if (!reprint && bill.getKotPrintedAt() == null) {
             bill.setKotPrintedAt(LocalDateTime.now());
             if (bill.getStatus() == Bill.Status.ACTIVE || bill.getStatus() == Bill.Status.KOT_REQUESTED) {
                 bill.setStatus(Bill.Status.KOT_PRINTED);
@@ -1349,12 +1517,12 @@ public class ThermalPrinterService {
                 PrintResultDTO juiceResult = null;
 
                 if (kotEnabled) {
-                    byte[] kitchenBytes = buildKotPayload(bill, kitchenItems, s, false, isUpdatedKot);
+                    byte[] kitchenBytes = buildKotPayload(bill, kitchenItems, s, false, isUpdatedKot, reprint);
                     String kitchenKey = effectiveKey + "_KITCHEN";
                     kitchenResult = dispatchPrintJob(kotHost, kotPort, kitchenBytes, "KOT", bill.getId(), kotRef, kitchenKey);
                 }
                 if (juiceKotEnabled) {
-                    byte[] juiceBytes = buildKotPayload(bill, juiceItems, s, true, isUpdatedKot);
+                    byte[] juiceBytes = buildKotPayload(bill, juiceItems, s, true, isUpdatedKot, reprint);
                     String juiceKey = effectiveKey + "_JUICE";
                     juiceResult = dispatchPrintJob(juiceKotHost, juiceKotPort, juiceBytes, "JUICE_KOT", bill.getId(), kotRef, juiceKey);
                 }
@@ -1393,7 +1561,7 @@ public class ThermalPrinterService {
                             .status("DISABLED")
                             .build();
                 }
-                byte[] juiceBytes = buildKotPayload(bill, juiceItems, s, true, isUpdatedKot);
+                byte[] juiceBytes = buildKotPayload(bill, juiceItems, s, true, isUpdatedKot, reprint);
                 return dispatchPrintJob(juiceKotHost, juiceKotPort, juiceBytes, "JUICE_KOT", bill.getId(), kotRef, effectiveKey);
             }
 
@@ -1410,7 +1578,7 @@ public class ThermalPrinterService {
                         .status("DISABLED")
                         .build();
             }
-            byte[] kitchenBytes = buildKotPayload(bill, kitchenItems, s, false, isUpdatedKot);
+            byte[] kitchenBytes = buildKotPayload(bill, kitchenItems, s, false, isUpdatedKot, reprint);
             return dispatchPrintJob(kotHost, kotPort, kitchenBytes, "KOT", bill.getId(), kotRef, effectiveKey);
 
         } catch (Exception e) {
@@ -1433,6 +1601,13 @@ public class ThermalPrinterService {
      */
     @Transactional
     public PrintResultDTO printUpdatedKot(Long billId, List<String> changeLines, String idempotencyKey) {
+        // An owner/main manager looking at the whole cafe prints with the settings and printers of the bill's branch.
+        if (com.neram.pos.access.OutletContext.current().isEmpty()) {
+            Long branch = branchOfBill(billId);
+            if (branch != null) {
+                return com.neram.pos.access.OutletContext.callAs(branch, () -> printUpdatedKot(billId, changeLines, idempotencyKey));
+            }
+        }
         PrinterSetting s = getSettings();
         String kotHost = (s.getKotHost() != null && !s.getKotHost().isBlank()) ? s.getKotHost() : "192.168.1.37";
         int kotPort = (s.getKotPort() != null && s.getKotPort() > 0) ? s.getKotPort() : 9100;
@@ -1456,7 +1631,7 @@ public class ThermalPrinterService {
         int paperWidth = (s.getPaperWidthMm() != null) ? s.getPaperWidthMm() : 80;
         List<String> effectiveChanges = (changeLines != null && !changeLines.isEmpty()) ? changeLines :
                 (bill.getKotLastChanges() != null ? java.util.Arrays.asList(bill.getKotLastChanges().split("\r?\n")) : List.of());
-        LocalDateTime updateTime = bill.getKotUpdatedAt() != null ? bill.getKotUpdatedAt() : LocalDateTime.now();
+        LocalDateTime updateTime = kotTicketTime(bill);
 
         byte[] rasterData = buildWatermarkedKotRaster(bill, "UPDATED", effectiveChanges, updateTime, null, paperWidth);
 
@@ -1472,6 +1647,13 @@ public class ThermalPrinterService {
      */
     @Transactional
     public PrintResultDTO printCancelledKot(Long billId, String cancellationReason, String idempotencyKey) {
+        // An owner/main manager looking at the whole cafe prints with the settings and printers of the bill's branch.
+        if (com.neram.pos.access.OutletContext.current().isEmpty()) {
+            Long branch = branchOfBill(billId);
+            if (branch != null) {
+                return com.neram.pos.access.OutletContext.callAs(branch, () -> printCancelledKot(billId, cancellationReason, idempotencyKey));
+            }
+        }
         PrinterSetting s = getSettings();
         String kotHost = (s.getKotHost() != null && !s.getKotHost().isBlank()) ? s.getKotHost() : "192.168.1.37";
         int kotPort = (s.getKotPort() != null && s.getKotPort() > 0) ? s.getKotPort() : 9100;
@@ -1865,6 +2047,21 @@ public class ThermalPrinterService {
     // HELPER METHODS
     // ============================================================
 
+    /** Heads-up shown to the operator when the job was queued but is unlikely to print right now. */
+    private String offlineWarning(String host, int port, String printType) {
+        if (!printBridgeService.isBridgeOnline()) {
+            return "The print bridge is offline. The ticket is saved and will print as soon as it reconnects.";
+        }
+        java.util.Optional<Boolean> reachable = printBridgeService.isPrinterReachable(host, port);
+        if (reachable != null && reachable.isPresent() && Boolean.FALSE.equals(reachable.get())) {
+            String name = "BILL".equalsIgnoreCase(printType) ? "The bill printer"
+                    : "JUICE_KOT".equalsIgnoreCase(printType) ? "The juice KOT printer"
+                    : "The kitchen printer";
+            return name + " (" + host + ") is not reachable. The ticket is saved and will print when it is back online.";
+        }
+        return null;
+    }
+
     private PrintResultDTO dispatchPrintJob(String host, int port, byte[] data, String printType, Long billId, String billNumber, String idempotencyKey) {
         String jobId = UUID.randomUUID().toString();
         PrintJob job = PrintJob.builder()
@@ -1886,7 +2083,7 @@ public class ThermalPrinterService {
         PrintJob persistedJob = printBridgeService.enqueuePrintJob(job);
 
         // All print jobs must go through the ESP32 hardware bridge (no direct socket from backend)
-        if (printBridgeService.isBridgeOnline() || (configuredBridgeToken != null && !configuredBridgeToken.isBlank())) {
+        if (!directPrintEnabled || printBridgeService.isBridgeOnline() || (configuredBridgeToken != null && !configuredBridgeToken.isBlank())) {
             log.info("Print job {} ({}) queued in database for ESP32 print bridge (Online: {})",
                     persistedJob.getJobId(), printType, printBridgeService.isBridgeOnline());
             return PrintResultDTO.builder()
@@ -1901,6 +2098,7 @@ public class ThermalPrinterService {
                     .status(persistedJob.getStatus().name())
                     .attemptCount(persistedJob.getAttemptCount())
                     .printedAt(LocalDateTime.now())
+                    .warning(offlineWarning(host, port, printType))
                     .build();
         }
 
@@ -2063,30 +2261,57 @@ public class ThermalPrinterService {
                 .orElse(null);
     }
 
-    private synchronized byte[] getLogoRasterBytes(int paperWidthMm, int logoSize) {
-        if (!logoLoadAttempted || cachedLogoRaster80mm == null) {
-            logoLoadAttempted = true;
-            try {
-                BufferedImage srcImage = loadLogoImage();
-                if (srcImage != null) {
-                    BufferedImage cropped = autoCrop(srcImage);
-                    int size80 = logoSize > 0 ? logoSize : 130;
-                    int size58 = Math.min(size80, 110);
-                    cachedLogoRaster80mm = buildEscPosRaster(cropped, size80, 576);
-                    cachedLogoRaster58mm = buildEscPosRaster(cropped, size58, 384);
-                    log.info("ESC/POS auto-cropped brand logo raster generated (80mm: {} bytes, 58mm: {} bytes, targetWidth={})",
-                            cachedLogoRaster80mm.length, cachedLogoRaster58mm.length, size80);
-                } else {
-                    log.warn("Brand logo image logo-05.png could not be found for ESC/POS printing");
-                }
-            } catch (Exception e) {
-                log.warn("Failed to generate thermal printer logo raster: {}", e.getMessage());
-            }
+    /** The branch's (or cafe's) uploaded logo as an ESC/POS image; null when the cafe has not uploaded one. */
+    private byte[] getLogoRasterBytes(int paperWidthMm, int logoSize) {
+        if (brandingService == null) {
+            return null;
         }
-        return (paperWidthMm == 58) ? cachedLogoRaster58mm : cachedLogoRaster80mm;
+        return brandingService.effectiveForContext(com.neram.pos.entity.BrandingAsset.Kind.LOGO)
+                .map(img -> rasterOf("logo", img, paperWidthMm, logoSize, bytes -> {
+                    BufferedImage cropped = autoCrop(ImageIO.read(new java.io.ByteArrayInputStream(bytes)));
+                    int size80 = logoSize > 0 ? logoSize : 130;
+                    return paperWidthMm == 58
+                            ? buildEscPosRaster(cropped, Math.min(size80, 110), 384)
+                            : buildEscPosRaster(cropped, size80, 576);
+                }))
+                .orElse(null);
     }
 
-    private synchronized byte[] getLogoRasterBytes(int paperWidthMm) {
+    /** The branch's (or cafe's) payment QR as an ESC/POS image; null when none was uploaded or it is unreadable. */
+    private byte[] getPaymentQrRasterBytes(int paperWidthMm) {
+        if (brandingService == null) {
+            return null;
+        }
+        return brandingService.effectiveForContext(com.neram.pos.entity.BrandingAsset.Kind.PAYMENT_QR)
+                .map(img -> rasterOf("qr", img, paperWidthMm, 0, bytes ->
+                        PaymentQrRaster.build(ImageIO.read(new java.io.ByteArrayInputStream(bytes)), paperWidthMm == 58 ? 384 : 576)))
+                .orElse(null);
+    }
+
+    private interface RasterBuilder {
+        byte[] build(byte[] imageBytes) throws Exception;
+    }
+
+    private byte[] rasterOf(String what, BrandingService.Image img, int paperWidthMm, int size, RasterBuilder builder) {
+        String key = what + "|" + com.neram.pos.tenancy.TenantContext.currentId().orElse(0L) + "|" + img.outletId() + "|"
+                + img.updatedAt() + "|" + paperWidthMm + "|" + size;
+        byte[] cached = imageRasterCache.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        try {
+            byte[] raster = builder.build(img.data());
+            if (raster != null) {
+                imageRasterCache.put(key, raster);
+            }
+            return raster;
+        } catch (Exception e) {
+            log.warn("Could not prepare the {} image for printing: {}", what, e.getMessage());
+            return null;
+        }
+    }
+
+    private byte[] getLogoRasterBytes(int paperWidthMm) {
         return getLogoRasterBytes(paperWidthMm, 130);
     }
 
@@ -2128,32 +2353,6 @@ public class ThermalPrinterService {
         int cropH = Math.min(h - cropY, (maxY - minY + 1) + 4);
 
         return img.getSubimage(cropX, cropY, cropW, cropH);
-    }
-
-    private BufferedImage loadLogoImage() {
-        // 1. Try classpath resource
-        try (InputStream is = getClass().getResourceAsStream("/logo-05.png")) {
-            if (is != null) {
-                return ImageIO.read(is);
-            }
-        } catch (Exception ignored) {}
-
-        // 2. Try filesystem paths
-        String[] paths = {
-            "logo-05.png",
-            "neram-pos-frontend/logo-05.png",
-            "/app/logo-05.png",
-            "/app/resources/logo-05.png"
-        };
-        for (String p : paths) {
-            File f = new File(p);
-            if (f.exists() && f.isFile()) {
-                try {
-                    return ImageIO.read(f);
-                } catch (Exception ignored) {}
-            }
-        }
-        return null;
     }
 
     private byte[] buildEscPosRaster(BufferedImage src, int logoSize, int paperDots) {

@@ -11,7 +11,8 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class PrintJob {
+@org.hibernate.annotations.Filter(name = "outletScope", condition = "(outlet_id = :outletId OR outlet_id IS NULL)")
+public class PrintJob implements com.neram.pos.access.OutletScoped {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -94,4 +95,7 @@ public class PrintJob {
     protected void onUpdate() {
         updatedAt = LocalDateTime.now();
     }
+
+    @Column(name = "outlet_id")
+    private Long outletId;
 }

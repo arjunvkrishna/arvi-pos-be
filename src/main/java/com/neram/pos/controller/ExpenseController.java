@@ -4,6 +4,8 @@ import com.neram.pos.dto.*;
 import com.neram.pos.service.ExpenseService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
+import com.neram.pos.util.PagedResponse;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -25,11 +27,14 @@ public class ExpenseController {
 
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
-    public ResponseEntity<List<CafeExpenseDTO>> getAllExpenses(@RequestParam(required = false) String type) {
-        if (type != null && !type.isBlank()) {
-            return ResponseEntity.ok(expenseService.getExpensesByType(type));
-        }
-        return ResponseEntity.ok(expenseService.getAllExpenses());
+    public ResponseEntity<List<CafeExpenseDTO>> getAllExpenses(
+            @RequestParam(required = false) String type,
+            @RequestParam(required = false) Integer month,
+            @RequestParam(required = false) Integer year,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String q,
+            Pageable pageable) {
+        return PagedResponse.of(expenseService.searchExpenses(month, year, type, status, q, pageable));
     }
 
     @GetMapping("/monthly")
@@ -76,8 +81,8 @@ public class ExpenseController {
     @GetMapping("/templates")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
     public ResponseEntity<List<ExpenseTemplateDTO>> getAllTemplates(
-            @RequestParam(required = false) Boolean onlyActive) {
-        return ResponseEntity.ok(expenseService.getAllTemplates(onlyActive));
+            @RequestParam(required = false) Boolean onlyActive, Pageable pageable) {
+        return PagedResponse.of(expenseService.getAllTemplates(onlyActive, pageable));
     }
 
     @GetMapping("/templates/{id}")

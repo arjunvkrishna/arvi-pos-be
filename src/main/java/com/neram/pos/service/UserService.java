@@ -1,5 +1,6 @@
 package com.neram.pos.service;
 
+import com.neram.pos.access.AccessPolicy;
 import com.neram.pos.dto.CreateUserRequestDTO;
 import com.neram.pos.dto.UserDTO;
 import com.neram.pos.entity.Employee;
@@ -35,33 +36,59 @@ public class UserService {
      * - MANAGER: sees only staff belonging to their specific assigned outlet
      */
     public List<UserDTO> getUsers(String callerRole) {
-        Long tenantId = tenantSecurityService.resolveTenantId(null);
-        java.util.Optional<User> callerOpt = tenantSecurityService.getCurrentUser();
-        List<User> users;
+        tenantSecurityService.resolveTenantId(null);
+        Caller caller = caller(callerRole);
+        return userRepository.findAll().stream()
+                .filter(u -> caller.role() == User.Role.SUPER_ADMIN
+                        || AccessPolicy.canSee(caller.role(), caller.outletId(), u.getRole(), u.getOutletId()))
+                .map(this::toDTO)
+                .collect(Collectors.toList());
+    }
 
-        if ("SUPER_ADMIN".equalsIgnoreCase(callerRole)) {
-            users = userRepository.findAll();
-        } else if ("ADMIN".equalsIgnoreCase(callerRole) || "CAFE_ADMIN".equalsIgnoreCase(callerRole) || "GENERAL_MANAGER".equalsIgnoreCase(callerRole)) {
-            users = userRepository.findAll().stream()
-                    .filter(u -> tenantId.equals(u.getTenantId()))
-                    .filter(u -> u.getRole() != User.Role.SUPER_ADMIN && ("ADMIN".equalsIgnoreCase(callerRole) || u.getRole() != User.Role.ADMIN))
-                    .collect(Collectors.toList());
-        } else {
-            Long callerOutletId = callerOpt.map(User::getOutletId).orElse(null);
-            users = userRepository.findAll().stream()
-                    .filter(u -> tenantId.equals(u.getTenantId()))
-                    .filter(u -> callerOutletId == null || callerOutletId.equals(u.getOutletId()))
-                    .filter(u -> u.getRole() != User.Role.ADMIN && u.getRole() != User.Role.CAFE_ADMIN && u.getRole() != User.Role.GENERAL_MANAGER)
-                    .collect(Collectors.toList());
+    /** One page of {@link #getUsers(String)}: the same visibility rules, ordered by id. */
+    public org.springframework.data.domain.Page<UserDTO> getUsers(String callerRole, org.springframework.data.domain.Pageable pageable) {
+        List<UserDTO> visible = getUsers(callerRole).stream()
+                .sorted(java.util.Comparator.comparing(UserDTO::getId))
+                .collect(Collectors.toList());
+        int from = pageable.isPaged() ? (int) Math.min(pageable.getOffset(), visible.size()) : 0;
+        int to = pageable.isPaged() ? Math.min(from + pageable.getPageSize(), visible.size()) : visible.size();
+        return new org.springframework.data.domain.PageImpl<>(visible.subList(from, to), pageable, visible.size());
+    }
+
+    /** Who is asking: the logged-in user's role and branch, or just the role name when no user can be resolved. */
+    private record Caller(User.Role role, Long outletId, boolean known) {}
+
+    private Caller caller(String callerRole) {
+        java.util.Optional<User> current = tenantSecurityService.getCurrentUser();
+        if (current.isPresent()) {
+            return new Caller(current.get().getRole(), current.get().getOutletId(), true);
         }
-        return users.stream().map(this::toDTO).collect(Collectors.toList());
+        User.Role role = callerRole == null ? User.Role.EMPLOYEE : User.Role.valueOf(callerRole.toUpperCase());
+        return new Caller(role, null, false);
+    }
+
+    /** Public entry for controllers that act on another account (e.g. unlocking it). */
+    public void assertCanManageUser(Long id, String callerRole) {
+        assertCanManage(userRepository.findById(id).orElseThrow(() -> new RuntimeException("User not found with id: " + id)), callerRole);
+    }
+
+    /** Throws unless the caller outranks the target (and, for branch-level callers, shares its branch). */
+    private void assertCanManage(User target, String callerRole) {
+        Caller c = caller(callerRole);
+        // Without a resolvable caller there is no branch to compare, so only the chain of command is enforced.
+        Long compareOutlet = c.known() ? c.outletId() : target.getOutletId();
+        if (!AccessPolicy.canManage(c.role(), compareOutlet, target.getRole(), target.getOutletId())) {
+            throw new RuntimeException("Access denied: you cannot manage this account");
+        }
     }
 
     public UserDTO getUserById(Long id, String callerRole) {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("User not found with id: " + id));
-        if ("MANAGER".equalsIgnoreCase(callerRole) && user.getRole() == User.Role.ADMIN) {
-            throw new RuntimeException("Access denied: Managers cannot view Admin accounts");
+        Caller c = caller(callerRole);
+        if (c.role() != User.Role.SUPER_ADMIN && !AccessPolicy.canSee(c.role(), c.known() ? c.outletId() : user.getOutletId(),
+                user.getRole(), user.getOutletId())) {
+            throw new RuntimeException("Access denied: you cannot view this account");
         }
         return toDTO(user);
     }
@@ -78,14 +105,18 @@ public class UserService {
         Long tenantId = tenantSecurityService.resolveTenantId(null);
         java.util.Optional<User> callerOpt = tenantSecurityService.getCurrentUser();
 
-        if ("MANAGER".equalsIgnoreCase(creatorRole)) {
-            if (targetRole == User.Role.ADMIN || targetRole == User.Role.CAFE_ADMIN || targetRole == User.Role.GENERAL_MANAGER || targetRole == User.Role.MANAGER) {
-                throw new RuntimeException("Access denied: Outlet Managers cannot create Manager or Admin accounts");
-            }
-        } else if ("GENERAL_MANAGER".equalsIgnoreCase(creatorRole)) {
-            if (targetRole == User.Role.ADMIN || targetRole == User.Role.CAFE_ADMIN || targetRole == User.Role.SUPER_ADMIN) {
-                throw new RuntimeException("Access denied: General Managers cannot create Admin accounts");
-            }
+        Caller creator = caller(creatorRole);
+        if (!AccessPolicy.hasCafeWideAccess(creator.role()) && creator.known() && creator.outletId() != null) {
+            // Branch-level creators can only add people to their own branch.
+            dto.setOutletId(creator.outletId());
+        }
+        if (!AccessPolicy.canManage(creator.role(), creator.known() ? creator.outletId() : dto.getOutletId(),
+                targetRole, dto.getOutletId() != null ? dto.getOutletId() : (creator.known() ? creator.outletId() : null))) {
+            throw new RuntimeException(creator.role() == User.Role.MANAGER
+                    ? "Access denied: Outlet Managers cannot create Manager or Admin accounts"
+                    : creator.role() == User.Role.GENERAL_MANAGER
+                    ? "Access denied: General Managers cannot create Admin accounts"
+                    : "Access denied: you cannot create a " + targetRole + " account");
         }
 
         if (userRepository.existsByUsername(dto.getUsername())) {
@@ -93,9 +124,6 @@ public class UserService {
         }
 
         Long assignedOutletId = dto.getOutletId();
-        if ("MANAGER".equalsIgnoreCase(creatorRole)) {
-            assignedOutletId = callerOpt.map(User::getOutletId).orElse(assignedOutletId);
-        }
 
         if (targetRole == User.Role.MANAGER && assignedOutletId == null) {
             throw new IllegalArgumentException("Outlet assignment is required when creating an Outlet Branch Manager");
@@ -134,6 +162,12 @@ public class UserService {
         user.setCanManageInventory(isElevated || Boolean.TRUE.equals(dto.getCanManageInventory()));
         user.setCanManageExpenses(isElevated || Boolean.TRUE.equals(dto.getCanManageExpenses()));
         user.setCanViewReports(isElevated || Boolean.TRUE.equals(dto.getCanViewReports()));
+        user.setCanPrintBill(!isElevated && Boolean.TRUE.equals(dto.getCanPrintBill()));
+        // Menu/settings rights are delegated by role level: owners and main managers always have them, so the toggle
+        // only matters (and may be set at creation) for branch managers and staff.
+        boolean cafeWide = AccessPolicy.hasCafeWideAccess(targetRole);
+        user.setCanManageMenu(!cafeWide && Boolean.TRUE.equals(dto.getCanManageMenu()));
+        user.setCanManageSettings(!cafeWide && Boolean.TRUE.equals(dto.getCanManageSettings()));
 
         user.setMustChangePassword(true);
         user.setActive(true);
@@ -156,9 +190,7 @@ public class UserService {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("User not found with id: " + id));
 
-        if ("MANAGER".equalsIgnoreCase(callerRole) && user.getRole() != User.Role.EMPLOYEE) {
-            throw new RuntimeException("Access denied: Managers can only reset passwords for Employee accounts");
-        }
+        assertCanManage(user, callerRole);
 
         if (newPassword == null || newPassword.isBlank()) {
             throw new IllegalArgumentException("New password cannot be empty");
@@ -180,7 +212,7 @@ public class UserService {
      * Requires current password verification before allowing the change.
      */
     @Transactional
-    public void changeOwnPassword(String username, String currentPassword, String newPassword) {
+    public String changeOwnPassword(String username, String currentPassword, String newPassword) {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
@@ -199,9 +231,14 @@ public class UserService {
         user.setUpdatedAt(LocalDateTime.now());
         userRepository.save(user);
         refreshTokenService.revokeAllForUser(user.getId());
+        // Other sessions end, but the caller keeps theirs: hand back a fresh refresh token.
+        // Refresh tokens name their cafe so /auth/refresh can find the right database.
+        String refreshToken = com.neram.pos.tenancy.TenantContext.require().code()
+                + AuthService.REFRESH_SEPARATOR + refreshTokenService.issue(user);
 
         auditLogService.log("UPDATE", "USER", user.getId(), null,
                 "User changed own password: " + username);
+        return refreshToken;
     }
 
     /**
@@ -221,9 +258,7 @@ public class UserService {
             assertNotLastActiveAdmin(user);
         }
 
-        if ("MANAGER".equalsIgnoreCase(callerRole) && user.getRole() != User.Role.EMPLOYEE) {
-            throw new RuntimeException("Access denied: Managers can only manage Employee accounts");
-        }
+        assertCanManage(user, callerRole);
 
         user.setActive(!user.getActive());
         user.setUpdatedAt(LocalDateTime.now());
@@ -247,8 +282,27 @@ public class UserService {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("User not found with id: " + id));
 
-        if ("MANAGER".equalsIgnoreCase(callerRole) && user.getRole() != User.Role.EMPLOYEE && user.getRole() != User.Role.CASHIER && user.getRole() != User.Role.CAPTAIN && user.getRole() != User.Role.KITCHEN) {
-            throw new RuntimeException("Access denied: Outlet Managers can only manage permissions for staff accounts");
+        try {
+            assertCanManage(user, callerRole);
+        } catch (RuntimeException denied) {
+            throw new RuntimeException(caller(callerRole).role() == User.Role.MANAGER
+                    ? "Access denied: Outlet Managers can only manage permissions for staff accounts"
+                    : denied.getMessage());
+        }
+        org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.getName() != null && auth.getName().equalsIgnoreCase(user.getUsername())) {
+            throw new RuntimeException("Access denied: you cannot change your own permissions");
+        }
+        // You can only hand out what you hold yourself.
+        if (dto.getCanManageMenu() != null && !holds(auth, AccessPolicy.PERM_MANAGE_MENU)) {
+            throw new RuntimeException("Access denied: you cannot grant menu management");
+        }
+        if (dto.getCanManageSettings() != null && !holds(auth, AccessPolicy.PERM_MANAGE_OUTLET_SETTINGS)) {
+            throw new RuntimeException("Access denied: you cannot grant settings management");
+        }
+        if (dto.getOutletId() != null && !dto.getOutletId().equals(user.getOutletId())
+                && !AccessPolicy.hasCafeWideAccess(caller(callerRole).role())) {
+            throw new RuntimeException("Access denied: only the owner or main manager can move staff between branches");
         }
 
         if (dto.getCanBill() != null) user.setCanBill(dto.getCanBill());
@@ -256,6 +310,9 @@ public class UserService {
         if (dto.getCanManageInventory() != null) user.setCanManageInventory(dto.getCanManageInventory());
         if (dto.getCanManageExpenses() != null) user.setCanManageExpenses(dto.getCanManageExpenses());
         if (dto.getCanViewReports() != null) user.setCanViewReports(dto.getCanViewReports());
+        if (dto.getCanPrintBill() != null) user.setCanPrintBill(dto.getCanPrintBill());
+        if (dto.getCanManageMenu() != null) user.setCanManageMenu(dto.getCanManageMenu());
+        if (dto.getCanManageSettings() != null) user.setCanManageSettings(dto.getCanManageSettings());
         if (dto.getOutletId() != null) user.setOutletId(dto.getOutletId());
 
         user.setUpdatedAt(LocalDateTime.now());
@@ -264,7 +321,9 @@ public class UserService {
         auditLogService.log("UPDATE", "USER", id, null,
                 "Updated permissions for " + user.getUsername() + ": canBill=" + user.getCanBill() +
                 ", canTakeOrders=" + user.getCanTakeOrders() + ", canManageInventory=" + user.getCanManageInventory() +
-                ", canManageExpenses=" + user.getCanManageExpenses() + ", canViewReports=" + user.getCanViewReports());
+                ", canManageExpenses=" + user.getCanManageExpenses() + ", canViewReports=" + user.getCanViewReports() +
+                ", canPrintBill=" + user.getCanPrintBill() + ", canManageMenu=" + user.getCanManageMenu()
+                + ", canManageSettings=" + user.getCanManageSettings());
         return toDTO(saved);
     }
 
@@ -347,6 +406,9 @@ public class UserService {
                 .canManageInventory(canManageInventory)
                 .canManageExpenses(canManageExpenses)
                 .canViewReports(canViewReports)
+                .canPrintBill(isElevated || Boolean.TRUE.equals(user.getCanPrintBill()))
+                .canManageMenu(AccessPolicy.managementAuthorities(user).contains(AccessPolicy.PERM_MANAGE_MENU))
+                .canManageSettings(AccessPolicy.managementAuthorities(user).contains(AccessPolicy.PERM_MANAGE_OUTLET_SETTINGS))
                 .tenantId(user.getTenantId())
                 .tenantName(tenantName)
                 .outletId(user.getOutletId())
@@ -416,6 +478,15 @@ public class UserService {
         return getMyProfile(username);
     }
 
+    private static boolean holds(org.springframework.security.core.Authentication auth, String authority) {
+        return auth == null || auth.getAuthorities().stream().anyMatch(a -> authority.equals(a.getAuthority()));
+    }
+
+    private static boolean isElevatedRole(User.Role role) {
+        return role == User.Role.SUPER_ADMIN || role == User.Role.ADMIN || role == User.Role.CAFE_ADMIN
+                || role == User.Role.GENERAL_MANAGER || role == User.Role.MANAGER;
+    }
+
     private UserDTO toDTO(User u) {
         String employeeName = u.getUsername();
         if (u.getEmployeeId() != null) {
@@ -453,6 +524,9 @@ public class UserService {
                 .canManageInventory(canManageInventory)
                 .canManageExpenses(canManageExpenses)
                 .canViewReports(canViewReports)
+                .canPrintBill(isElevatedRole(u.getRole()) || Boolean.TRUE.equals(u.getCanPrintBill()))
+                .canManageMenu(AccessPolicy.managementAuthorities(u).contains(AccessPolicy.PERM_MANAGE_MENU))
+                .canManageSettings(AccessPolicy.managementAuthorities(u).contains(AccessPolicy.PERM_MANAGE_OUTLET_SETTINGS))
                 .outletId(u.getOutletId())
                 .outletName(outletName)
                 .tenantId(u.getTenantId())

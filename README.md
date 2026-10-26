@@ -87,7 +87,8 @@ arvi-pos-be/
 │   │   │   ├── security/        # TenantSecurityService, JWT Filter, CustomUserDetailsService
 │   │   │   └── service/         # Business logic and transaction management
 │   │   └── resources/
-│   │       ├── db/migration/    # Versioned Flyway SQL migration scripts (V1 through V61)
+│   │       ├── db/control/      # Control database (cafe registry, platform admins) migrations
+│   │       ├── db/migration/    # Per-cafe database migrations, applied to every cafe database
 │   │       └── application.yml  # Application properties and environment variable bindings
 │   └── test/                    # JUnit 5 integration and unit tests
 ├── Dockerfile                   # Multi-stage optimized JRE Docker build
@@ -103,17 +104,37 @@ All sensitive values are injected strictly through environment variables:
 
 | Variable | Description | Default / Example |
 |---|---|---|
-| `DB_HOST` | PostgreSQL host | `postgres` |
+| `DB_HOST` | PostgreSQL host (control database; cafe databases are created on the same server) | `postgres` |
 | `DB_PORT` | PostgreSQL port | `5432` |
-| `DB_NAME` | Database name | `arvi_pos` |
-| `DB_USER` | Database username | `arvi_user` |
-| `DB_PASSWORD` | Database user password | `<your_db_password>` |
+| `DB_NAME` | **Control** database (cafe registry + platform admins). Never holds cafe data | `arvi_control` |
+| `DB_USER` | Control database role (needs `CREATEDB CREATEROLE`, or set `PG_ADMIN_USER`) | `arvi_user` |
+| `DB_PASSWORD` | Control database role password | `<your_db_password>` |
+| `TENANT_SECRET_KEY` | Master key (base64, 32 bytes) that encrypts per-cafe DB passwords. **Required.** `openssl rand -base64 32` | `<generated>` |
 | `JWT_SECRET` | 256-bit secret key for HMAC-SHA512 signing | `<your_jwt_secret_key>` |
 | `JWT_EXPIRATION` | Token validity duration in milliseconds | `86400000` (24h) |
 | `PRINTER_BRIDGE_TOKEN` | Shared secret token for ESP32 print bridge | `<your_bridge_token>` |
 | `SEED_DEMO_DATA` | Flag to seed demo data on fresh startup | `true` or `false` |
 | `SEED_DEMO_USERS` | Flag to seed demo users on fresh startup | `true` or `false` |
 | `JAVA_OPTS` | JVM heap and memory optimization flags | `-Xms128m -Xmx512m` |
+
+---
+
+## Data isolation: one database per cafe
+
+Each cafe has its own PostgreSQL database and role; cafe databases are created, migrated and registered at runtime
+from the SaaS console (`POST /api/super-admin/cafes`), with generated credentials stored AES-GCM encrypted in the
+control database. No `.env` edit or restart is needed to add a cafe. Staff log in with a **cafe code**; the
+`superadmin` logs in without one. See [docs/MULTI_TENANCY.md](docs/MULTI_TENANCY.md) for the full design, the
+operations guide (rotate credentials, suspend, migrate) and capacity notes.
+
+---
+
+## Branches, roles and branding
+
+Branch data (bills, tables, shifts, expenses, stock, staff, printers) is separated per outlet; the menu is shared.
+Owner > main manager > branch manager > staff, enforced in the backend, with delegable toggles for menu and settings.
+Every cafe uploads its own logo and payment QR (cafe-wide, with an optional per-branch QR). Details and the permission
+table: [docs/MULTI_TENANCY.md](docs/MULTI_TENANCY.md#branches-outlets-and-the-chain-of-command).
 
 ---
 
@@ -154,7 +175,8 @@ docker run -d \
 The backend is stateless and optimized for horizontal scaling in Docker Swarm mode:
 - **Stateless Replicas**: JWT token authentication with database-backed token rotation (`SELECT ... FOR UPDATE` row locks).
 - **Concurrency Pooling**: Externalized HikariCP pool (`HIKARI_MAX_POOL_SIZE`, `HIKARI_MIN_IDLE`) and Tomcat thread configuration (`TOMCAT_MAX_THREADS`, `TOMCAT_MIN_SPARE_THREADS`).
-- **Flyway Lock Retry**: Multiple replicas starting concurrently wait on migrations gracefully (`lock-retry-count: 60`).
+- **Flyway Lock Retry**: Multiple replicas starting concurrently wait on each cafe database's migrations gracefully (`lock-retry-count: 60`).
+- **Per-cafe pools**: connection pools are created lazily per cafe and closed when idle (see `docs/MULTI_TENANCY.md` for sizing and `max_connections`).
 - **Graceful Shutdown**: 30-second shutdown phase timeout (`server.shutdown: graceful`) prevents dropped transactions during scale-in operations.
 
 ```bash
@@ -167,7 +189,8 @@ docker service scale arvi_backend=10
 ## Health & Verification Endpoints
 
 - **Health Check**: `GET /api/health`
-- **Authentication**: `POST /api/auth/login`
+- **Authentication**: `POST /api/auth/login` (`{tenantCode, username, password}`; omit `tenantCode` for the platform `superadmin`)
+- **Public menu**: `GET /api/public/{cafe}/menu`
 - **SaaS Cafes**: `GET /api/super-admin/cafes`
 - **Franchise Outlets**: `GET /api/outlets`
 - **Franchise Analytics**: `GET /api/franchise/analytics`

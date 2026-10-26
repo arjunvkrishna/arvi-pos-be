@@ -68,7 +68,7 @@ public class WebSecurityConfig {
         config.setAllowedOriginPatterns(List.of("*"));
         config.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
-        config.setExposedHeaders(List.of("Authorization", "Content-Type"));
+        config.setExposedHeaders(List.of("Authorization", "Content-Type", "X-Total-Count", "X-Total-Pages", "X-Page", "X-Page-Size"));
         config.setAllowCredentials(true);
         config.setMaxAge(3600L);
 

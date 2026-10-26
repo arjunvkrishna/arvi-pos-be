@@ -7,7 +7,7 @@ import org.springframework.stereotype.Repository;
 import java.util.List;
 
 @Repository
-public interface MenuItemRepository extends JpaRepository<MenuItem, Long> {
+public interface MenuItemRepository extends JpaRepository<MenuItem, Long>, org.springframework.data.jpa.repository.JpaSpecificationExecutor<MenuItem> {
     List<MenuItem> findByActiveTrue();
     List<MenuItem> findByCategoryIdAndActiveTrue(Long categoryId);
     List<MenuItem> findByIsAvailableTrueAndActiveTrue();

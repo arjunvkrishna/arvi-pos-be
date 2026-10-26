@@ -11,7 +11,8 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class PrinterSetting {
+@org.hibernate.annotations.Filter(name = "outletScope", condition = "(outlet_id = :outletId OR outlet_id IS NULL)")
+public class PrinterSetting implements com.neram.pos.access.OutletScoped {
 
     @Id
     private Long id;
@@ -82,6 +83,11 @@ public class PrinterSetting {
     @Column(name = "logo_enabled", nullable = false)
     @Builder.Default
     private Boolean logoEnabled = true;
+
+    /** Print the UPI payment QR (neram-qr.png) on customer bills, between the payment mode and the thank-you line. */
+    @Column(name = "payment_qr_enabled", nullable = false)
+    @Builder.Default
+    private Boolean paymentQrEnabled = true;
 
     @Column(length = 500)
     @Builder.Default
@@ -177,6 +183,7 @@ public class PrinterSetting {
         if (juiceKotHost == null || juiceKotHost.isBlank()) juiceKotHost = "192.168.1.42";
         if (juiceKotPort == null || juiceKotPort <= 0) juiceKotPort = 9100;
         if (juiceKotEnabled == null) juiceKotEnabled = true;
+        if (paymentQrEnabled == null) paymentQrEnabled = true;
 
         if (juiceKotHeaderTitle == null || juiceKotHeaderTitle.isBlank()) juiceKotHeaderTitle = "*** JUICE ORDER ***";
         if (juiceKotSubheader == null || juiceKotSubheader.isBlank()) juiceKotSubheader = "NERAM - JUICE BAR";
@@ -197,4 +204,7 @@ public class PrinterSetting {
         if (fontSize == null || fontSize.isBlank()) fontSize = "DOUBLE_HEIGHT";
         if (printStyle == null || printStyle.isBlank()) printStyle = "CRISP_DARK";
     }
+
+    @Column(name = "outlet_id")
+    private Long outletId;
 }

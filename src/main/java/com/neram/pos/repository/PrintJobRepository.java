@@ -33,5 +33,11 @@ public interface PrintJobRepository extends JpaRepository<PrintJob, Long> {
 
     long countByStatus(PrintJobStatus status);
 
+    List<PrintJob> findByStatusInAndUpdatedAtAfter(List<PrintJobStatus> statuses, LocalDateTime after);
+
+    long countByStatusAndCreatedAtBefore(PrintJobStatus status, LocalDateTime before);
+
+    Optional<PrintJob> findFirstByStatusOrderByCreatedAtAsc(PrintJobStatus status);
+
     List<PrintJob> findTop50ByOrderByCreatedAtDesc();
 }

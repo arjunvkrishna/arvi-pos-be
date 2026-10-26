@@ -12,7 +12,7 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Entity
 @Table(name = "menu_items")
-public class MenuItem {
+public class MenuItem implements com.neram.pos.tenancy.TenantScoped {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -42,7 +42,7 @@ public class MenuItem {
     private Boolean active = true;
 
     @Column(name = "tenant_id")
-    private Long tenantId = 1L;
+    private Long tenantId;
 
     @Column(name = "outlet_id")
     private Long outletId;

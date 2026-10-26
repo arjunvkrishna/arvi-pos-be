@@ -12,7 +12,8 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Entity
 @Table(name = "users")
-public class User {
+@org.hibernate.annotations.Filter(name = "outletScope", condition = "(outlet_id = :outletId OR outlet_id IS NULL)")
+public class User implements com.neram.pos.tenancy.TenantScoped , com.neram.pos.access.OutletScoped {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -51,6 +52,14 @@ public class User {
 
     @Column(name = "can_view_reports", nullable = false)
     private Boolean canViewReports = false;
+    @Column(name = "can_print_bill", nullable = false)
+    private Boolean canPrintBill = false;
+
+    @Column(name = "can_manage_menu", nullable = false)
+    private Boolean canManageMenu = false;
+
+    @Column(name = "can_manage_settings", nullable = false)
+    private Boolean canManageSettings = false;
 
     @Column(name = "must_change_password", nullable = false)
     private Boolean mustChangePassword = false;

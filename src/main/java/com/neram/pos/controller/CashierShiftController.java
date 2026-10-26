@@ -91,6 +91,25 @@ public class CashierShiftController {
         return ResponseEntity.ok(shiftService.getDrawerAnalysis(period, startDate, endDate, month, year, cashierId, registerId, status));
     }
 
+    /** One page of a drawer analysis table (table = shifts | daily | monthly) for the same period and filters as /analysis. */
+    @GetMapping("/analysis/table")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    public ResponseEntity<List<Object>> getDrawerAnalysisTable(
+            @RequestParam(defaultValue = "shifts") String table,
+            @RequestParam(defaultValue = "false") boolean anomaliesOnly,
+            @RequestParam(required = false) String period,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) Integer month,
+            @RequestParam(required = false) Integer year,
+            @RequestParam(required = false) Long cashierId,
+            @RequestParam(required = false) String registerId,
+            @RequestParam(required = false) String status,
+            org.springframework.data.domain.Pageable pageable) {
+        return com.neram.pos.util.PagedResponse.ofAny(shiftService.getDrawerAnalysisTable(
+                table, anomaliesOnly, period, startDate, endDate, month, year, cashierId, registerId, status, pageable));
+    }
+
     @GetMapping("/analysis/export/csv")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
     public ResponseEntity<byte[]> exportDrawerAnalysisCsv(
@@ -116,7 +135,7 @@ public class CashierShiftController {
     }
 
     @PutMapping("/settings")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @PreAuthorize("hasAuthority('PERM_MANAGE_SETTINGS')")
     public ResponseEntity<CashierShiftDTO.ShiftSettingsDTO> updateSettings(@RequestBody CashierShiftDTO.ShiftSettingsDTO req) {
         return ResponseEntity.ok(shiftService.updateSettings(req));
     }

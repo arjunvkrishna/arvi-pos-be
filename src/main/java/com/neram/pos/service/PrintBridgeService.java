@@ -6,11 +6,12 @@ import com.neram.pos.entity.PrintJob;
 import com.neram.pos.entity.PrintJobStatus;
 import com.neram.pos.repository.BillRepository;
 import com.neram.pos.repository.PrintJobRepository;
+import com.neram.pos.tenancy.TenantContext;
+import com.neram.pos.tenancy.TenantInfo;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -20,6 +21,7 @@ import java.time.ZoneId;
 import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -40,18 +42,74 @@ public class PrintBridgeService {
     private final JdbcTemplate jdbcTemplate;
     private final TransactionTemplate transactionTemplate;
 
-    private final AtomicReference<PrintBridgeHeartbeatDTO> latestHeartbeat = new AtomicReference<>(null);
-    private final AtomicLong lastHeartbeatTimestamp = new AtomicLong(0L);
+    /** Bridge heartbeat and long-poll wake-up state of one cafe; kept per cafe so cafes never see each other's. */
+    private static final class BridgeState {
+        final AtomicReference<PrintBridgeHeartbeatDTO> heartbeat = new AtomicReference<>(null);
+        final AtomicLong lastHeartbeat = new AtomicLong(0L);
+        // Notification lock/condition for immediate wake-up of long-polling bridge requests
+        final ReentrantLock lock = new ReentrantLock();
+        final Condition available = lock.newCondition();
+        volatile long lastSeen = System.currentTimeMillis();
+        volatile TenantInfo tenant;
+    }
 
-    // Notification lock/condition for immediate wake-up of long-polling bridge requests
-    private final ReentrantLock pollLock = new ReentrantLock();
-    private final Condition jobAvailableCondition = pollLock.newCondition();
+    private static final long RECENTLY_ACTIVE_MS = 15 * 60_000L;
+
+    private final ConcurrentHashMap<Long, BridgeState> states = new ConcurrentHashMap<>();
+
+    private BridgeState state() {
+        Optional<TenantInfo> current = TenantContext.current();
+        BridgeState st = states.computeIfAbsent(current.map(TenantInfo::id).orElse(0L), id -> new BridgeState());
+        current.ifPresent(t -> st.tenant = t);
+        return st;
+    }
+
+    /** Marks real bridge/queue activity (heartbeat, poll, enqueue) for the current cafe. */
+    private void touch() {
+        state().lastSeen = System.currentTimeMillis();
+    }
+
+    /** Cafes whose bridge has sent a heartbeat since this server started (the only ones that can go "offline"). */
+    public List<TenantInfo> tenantsWithBridgeHeartbeat() {
+        return states.values().stream()
+                .filter(st -> st.tenant != null && st.lastHeartbeat.get() > 0)
+                .map(st -> st.tenant)
+                .toList();
+    }
+
+    /** Cafes whose bridge has polled or reported recently; only these can hold claimed jobs worth sweeping. */
+    public List<TenantInfo> recentlyActiveTenants() {
+        long cutoff = System.currentTimeMillis() - RECENTLY_ACTIVE_MS;
+        return states.values().stream()
+                .filter(st -> st.tenant != null && st.lastSeen >= cutoff)
+                .map(st -> st.tenant)
+                .toList();
+    }
 
     /**
      * Check if a bridge container has reported a heartbeat within the last 30 seconds
      */
+    /** Epoch millis of the last bridge heartbeat, 0 if none was received since this backend started. */
+    public long getLastHeartbeatTimestamp() {
+        return state().lastHeartbeat.get();
+    }
+
+    /**
+     * Whether the bridge currently reports the printer at host:port as reachable.
+     * Empty when unknown (bridge offline, no heartbeat yet, or the host is not one the bridge reported).
+     */
+    public java.util.Optional<Boolean> isPrinterReachable(String host, Integer port) {
+        PrintBridgeHeartbeatDTO hb = state().heartbeat.get();
+        if (hb == null || !isBridgeOnline() || host == null || host.isBlank()) return java.util.Optional.empty();
+        String h = host.trim();
+        if (h.equals(hb.getBillPrinterHost()) && hb.getBillPrinterReachable() != null) return java.util.Optional.of(hb.getBillPrinterReachable());
+        if (h.equals(hb.getKotPrinterHost()) && hb.getKotPrinterReachable() != null) return java.util.Optional.of(hb.getKotPrinterReachable());
+        if (h.equals(hb.getJuiceKotPrinterHost()) && hb.getJuiceKotPrinterReachable() != null) return java.util.Optional.of(hb.getJuiceKotPrinterReachable());
+        return java.util.Optional.empty();
+    }
+
     public boolean isBridgeOnline() {
-        long last = lastHeartbeatTimestamp.get();
+        long last = state().lastHeartbeat.get();
         return last > 0 && (System.currentTimeMillis() - last) <= BRIDGE_ONLINE_THRESHOLD_MS;
     }
 
@@ -59,8 +117,9 @@ public class PrintBridgeService {
      * Record a heartbeat from a local print bridge
      */
     public void recordHeartbeat(PrintBridgeHeartbeatDTO heartbeat) {
-        latestHeartbeat.set(heartbeat);
-        lastHeartbeatTimestamp.set(System.currentTimeMillis());
+        touch();
+        state().heartbeat.set(heartbeat);
+        state().lastHeartbeat.set(System.currentTimeMillis());
         log.debug("Printer bridge heartbeat from {}: printerReachable={}, latency={}ms, unsyncedJobs={}",
                 heartbeat.getBridgeIp(), heartbeat.getPrinterReachable(), heartbeat.getPrinterLatencyMs(), heartbeat.getUnsyncedJobsCount());
     }
@@ -69,11 +128,12 @@ public class PrintBridgeService {
      * Notify any long-polling threads that a new job is available in the database
      */
     public void notifyJobAvailable() {
-        pollLock.lock();
+        touch();
+        state().lock.lock();
         try {
-            jobAvailableCondition.signalAll();
+            state().available.signalAll();
         } finally {
-            pollLock.unlock();
+            state().lock.unlock();
         }
     }
 
@@ -92,8 +152,12 @@ public class PrintBridgeService {
             }
         }
 
-        // Check if an identical job is already PENDING or CLAIMED for this bill and type
-        if (job.getBillId() != null && job.getJobType() != null) {
+        // Without an idempotency key, fall back to "an identical job is already waiting for this bill and type".
+        // When a key IS supplied it is the authoritative duplicate guard: a second kitchen round for the same
+        // order carries a new key and must become its own job even if the first ticket is still waiting
+        // (printer offline), otherwise the new dishes would never reach the kitchen.
+        boolean hasKey = job.getIdempotencyKey() != null && !job.getIdempotencyKey().isBlank();
+        if (!hasKey && job.getBillId() != null && job.getJobType() != null) {
             List<PrintJob> activeJobs = printJobRepository.findByBillIdAndJobTypeAndStatusIn(
                     job.getBillId(),
                     job.getJobType(),
@@ -137,6 +201,7 @@ public class PrintBridgeService {
      * Poll next eligible job from database with long-polling timeout and atomic claim
      */
     public PrintBridgeJobDTO pollJob(String bridgeId, int timeoutSeconds) {
+        touch();
         String effectiveBridgeId = (bridgeId != null && !bridgeId.isBlank()) ? bridgeId : "neram-bridge-main";
         if (timeoutSeconds <= 0) {
             Long claimedJobId = claimNextEligibleJob(effectiveBridgeId);
@@ -172,14 +237,14 @@ public class PrintBridgeService {
             }
 
             // Wait for notification or slice of timeout
-            pollLock.lock();
+            state().lock.lock();
             try {
-                jobAvailableCondition.await(Math.min(remainingMs, 1500L), TimeUnit.MILLISECONDS);
+                state().available.await(Math.min(remainingMs, 1500L), TimeUnit.MILLISECONDS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
             } finally {
-                pollLock.unlock();
+                state().lock.unlock();
             }
         }
 
@@ -202,6 +267,7 @@ public class PrintBridgeService {
                 SELECT id FROM print_jobs
                 WHERE status IN ('PENDING', 'RETRY_PENDING')
                   AND (next_eligible_at IS NULL OR next_eligible_at <= ?)
+                  AND (CAST(? AS bigint) IS NULL OR outlet_id = CAST(? AS bigint) OR outlet_id IS NULL)
                 ORDER BY id ASC
                 LIMIT 1
                 FOR UPDATE SKIP LOCKED
@@ -220,7 +286,10 @@ public class PrintBridgeService {
                         now,
                         leaseExpires,
                         now,
-                        now
+                        now,
+                        // A bridge that names its branch only receives that branch's tickets.
+                        com.neram.pos.access.OutletContext.currentIdOrNull(),
+                        com.neram.pos.access.OutletContext.currentIdOrNull()
                 );
             } catch (EmptyResultDataAccessException e) {
                 return null;
@@ -455,7 +524,6 @@ public class PrintBridgeService {
     /**
      * Background cleaner for expired claims (e.g. bridge crashed or network lost before report)
      */
-    @Scheduled(fixedDelay = 15000)
     @Transactional
     public void sweepExpiredLeases() {
         LocalDateTime now = LocalDateTime.now();
@@ -485,7 +553,6 @@ public class PrintBridgeService {
     /**
      * Purge payload binary blob after 24 hours retention, keeping compact status record
      */
-    @Scheduled(cron = "0 0 * * * *") // hourly
     @Transactional
     public void purgeOldPayloads() {
         LocalDateTime threshold = LocalDateTime.now().minusHours(24);
@@ -522,9 +589,9 @@ public class PrintBridgeService {
      */
     public PrintBridgeStatusDTO getBridgeStatus(String currentPrinterHost, Integer currentPrinterPort) {
         boolean online = isBridgeOnline();
-        long last = lastHeartbeatTimestamp.get();
+        long last = state().lastHeartbeat.get();
         Long secondsAgo = (last > 0) ? Math.max(0, (System.currentTimeMillis() - last) / 1000) : null;
-        PrintBridgeHeartbeatDTO hb = latestHeartbeat.get();
+        PrintBridgeHeartbeatDTO hb = state().heartbeat.get();
 
         LocalDateTime lastHbTime = (last > 0)
                 ? LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(last), ZoneId.of("Asia/Kolkata"))
@@ -602,6 +669,6 @@ public class PrintBridgeService {
     }
 
     public PrintBridgeHeartbeatDTO getLatestHeartbeat() {
-        return latestHeartbeat.get();
+        return state().heartbeat.get();
     }
 }

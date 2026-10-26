@@ -23,19 +23,19 @@ public class CategoryController {
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @PreAuthorize("hasAuthority('PERM_MANAGE_MENU')")
     public ResponseEntity<CategoryDTO> createCategory(@RequestBody CategoryRequestDTO request) {
         return ResponseEntity.ok(categoryService.createCategory(request));
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @PreAuthorize("hasAuthority('PERM_MANAGE_MENU')")
     public ResponseEntity<CategoryDTO> updateCategory(@PathVariable Long id, @RequestBody CategoryRequestDTO request) {
         return ResponseEntity.ok(categoryService.updateCategory(id, request));
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @PreAuthorize("hasAuthority('PERM_MANAGE_MENU')")
     public ResponseEntity<Void> deleteCategory(@PathVariable Long id) {
         categoryService.deleteCategory(id);
         return ResponseEntity.noContent().build();

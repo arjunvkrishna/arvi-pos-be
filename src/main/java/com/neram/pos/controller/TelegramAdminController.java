@@ -3,6 +3,8 @@ package com.neram.pos.controller;
 import com.neram.pos.dto.*;
 import com.neram.pos.service.TelegramNotificationService;
 import lombok.RequiredArgsConstructor;
+import com.neram.pos.util.PagedResponse;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -12,7 +14,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/admin/telegram")
-@PreAuthorize("hasRole('ADMIN')")
+@PreAuthorize("hasAuthority('PERM_MANAGE_SETTINGS')")
 @RequiredArgsConstructor
 public class TelegramAdminController {
 
@@ -29,8 +31,8 @@ public class TelegramAdminController {
     }
 
     @GetMapping("/recipients")
-    public ResponseEntity<List<TelegramRecipientDTO>> getRecipients() {
-        return ResponseEntity.ok(notificationService.getAllManagerRecipients());
+    public ResponseEntity<List<TelegramRecipientDTO>> getRecipients(Pageable pageable) {
+        return PagedResponse.of(notificationService.getAllManagerRecipients(pageable));
     }
 
     @PutMapping("/recipients/{userId}/toggle")
@@ -75,7 +77,7 @@ public class TelegramAdminController {
     }
 
     @GetMapping("/history")
-    public ResponseEntity<List<TelegramDeliveryLogDTO>> getDeliveryHistory() {
-        return ResponseEntity.ok(notificationService.getDeliveryHistory());
+    public ResponseEntity<List<TelegramDeliveryLogDTO>> getDeliveryHistory(Pageable pageable) {
+        return PagedResponse.of(notificationService.getDeliveryHistory(pageable));
     }
 }

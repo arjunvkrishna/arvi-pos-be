@@ -14,4 +14,7 @@ public class UpdateUserPermissionsRequestDTO {
     private Boolean canManageExpenses;
     private Boolean canViewReports;
     private Long outletId;
+    private Boolean canPrintBill;
+    private Boolean canManageMenu;
+    private Boolean canManageSettings;
 }

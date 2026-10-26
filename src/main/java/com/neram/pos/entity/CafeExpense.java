@@ -13,7 +13,8 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Entity
 @Table(name = "cafe_expenses")
-public class CafeExpense {
+@org.hibernate.annotations.Filter(name = "outletScope", condition = "(outlet_id = :outletId OR outlet_id IS NULL)")
+public class CafeExpense implements com.neram.pos.access.OutletScoped {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -70,4 +71,7 @@ public class CafeExpense {
     public enum ExpenseType {
         RENT, WATER, ELECTRICITY, EMI, INTERNET, GAS, MAINTENANCE, MARKETING, MISC
     }
+
+    @Column(name = "outlet_id")
+    private Long outletId;
 }

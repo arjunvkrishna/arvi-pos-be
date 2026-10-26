@@ -35,6 +35,7 @@ public class CashierShiftService {
     private final BillRepository billRepository;
     private final BillRefundRepository billRefundRepository;
     private final CafeExpenseRepository cafeExpenseRepository;
+    private final com.neram.pos.repository.BillPaymentRepository billPaymentRepository;
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final DateTimeFormatter DATETIME_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
@@ -327,29 +328,53 @@ public class CashierShiftService {
         bill.setShiftId(shift.getId());
         BigDecimal net = bill.getNetAmount().setScale(2, RoundingMode.HALF_UP);
 
-        if (bill.getPaymentMode() == Bill.PaymentMode.CASH) {
-            shift.setCashSales(shift.getCashSales().add(net));
-        } else if (bill.getPaymentMode() == Bill.PaymentMode.UPI) {
-            shift.setUpiSales(shift.getUpiSales().add(net));
-        } else if (bill.getPaymentMode() == Bill.PaymentMode.CARD) {
-            shift.setCardSales(shift.getCardSales().add(net));
+        List<SplitPayments.Part> parts = splitPartsOf(bill);
+        if (!parts.isEmpty()) {
+            addToShift(shift, SplitPayments.byMode(parts), false);
+        } else {
+            addToShift(shift, singleMode(bill.getPaymentMode(), net), false);
         }
         shiftRepository.save(shift);
     }
 
+    private static Map<Bill.PaymentMode, BigDecimal> singleMode(Bill.PaymentMode mode, BigDecimal amount) {
+        Map<Bill.PaymentMode, BigDecimal> m = new EnumMap<>(Bill.PaymentMode.class);
+        if (mode != null) m.put(mode, amount);
+        return m;
+    }
+
+    /** Adds (or removes) money per payment mode on the shift's cash, UPI and card sales. Removing never goes below zero. */
+    private static void addToShift(CashierShift shift, Map<Bill.PaymentMode, BigDecimal> money, boolean remove) {
+        for (Map.Entry<Bill.PaymentMode, BigDecimal> e : money.entrySet()) {
+            BigDecimal v = remove ? e.getValue().negate() : e.getValue();
+            if (e.getKey() == Bill.PaymentMode.CASH) shift.setCashSales(shift.getCashSales().add(v).max(BigDecimal.ZERO));
+            else if (e.getKey() == Bill.PaymentMode.UPI) shift.setUpiSales(shift.getUpiSales().add(v).max(BigDecimal.ZERO));
+            else if (e.getKey() == Bill.PaymentMode.CARD) shift.setCardSales(shift.getCardSales().add(v).max(BigDecimal.ZERO));
+        }
+    }
+
+    /** The parts of a bill paid in more than one way; empty for a bill paid one way. */
+    private List<SplitPayments.Part> splitPartsOf(Bill bill) {
+        if (bill.getId() == null || bill.getPaymentSummary() == null) return List.of();
+        return billPaymentRepository.findByBillIdOrderByIdAsc(bill.getId()).stream()
+                .map(p -> new SplitPayments.Part(Bill.PaymentMode.valueOf(p.getMode()), p.getAmount(), p.getReference())).collect(Collectors.toList());
+    }
+
     @Transactional
     public void recordBillAdjustment(Bill bill, Bill.PaymentMode oldMode, BigDecimal oldNet) {
+        recordBillAdjustment(bill, oldMode, oldNet, List.of(), List.of());
+    }
+
+    /** A paid bill was edited: take back what it had put on the shift (per part if it was split) and add what it is now. */
+    @Transactional
+    public void recordBillAdjustment(Bill bill, Bill.PaymentMode oldMode, BigDecimal oldNet, List<SplitPayments.Part> oldParts, List<SplitPayments.Part> newParts) {
         if (bill == null || bill.getShiftId() == null) return;
         shiftRepository.findById(bill.getShiftId()).ifPresent(shift -> {
-            if (oldNet != null && oldMode != null) {
-                if (oldMode == Bill.PaymentMode.CASH) shift.setCashSales(shift.getCashSales().subtract(oldNet).max(BigDecimal.ZERO));
-                else if (oldMode == Bill.PaymentMode.UPI) shift.setUpiSales(shift.getUpiSales().subtract(oldNet).max(BigDecimal.ZERO));
-                else if (oldMode == Bill.PaymentMode.CARD) shift.setCardSales(shift.getCardSales().subtract(oldNet).max(BigDecimal.ZERO));
-            }
+            if (oldParts != null && !oldParts.isEmpty()) addToShift(shift, SplitPayments.byMode(oldParts), true);
+            else if (oldNet != null && oldMode != null) addToShift(shift, singleMode(oldMode, oldNet), true);
             BigDecimal newNet = bill.getNetAmount() != null ? bill.getNetAmount().setScale(2, RoundingMode.HALF_UP) : BigDecimal.ZERO;
-            if (bill.getPaymentMode() == Bill.PaymentMode.CASH) shift.setCashSales(shift.getCashSales().add(newNet));
-            else if (bill.getPaymentMode() == Bill.PaymentMode.UPI) shift.setUpiSales(shift.getUpiSales().add(newNet));
-            else if (bill.getPaymentMode() == Bill.PaymentMode.CARD) shift.setCardSales(shift.getCardSales().add(newNet));
+            if (newParts != null && !newParts.isEmpty()) addToShift(shift, SplitPayments.byMode(newParts), false);
+            else addToShift(shift, singleMode(bill.getPaymentMode(), newNet), false);
             shiftRepository.save(shift);
         });
     }
@@ -956,6 +981,32 @@ public class CashierShiftService {
                 .dailySummaries(dailySummaries)
                 .monthlySummaries(monthlySummaries)
                 .build();
+    }
+
+    /**
+     * One page of a drawer analysis table: "shifts" (optionally only the ones with anomaly flags), "daily" or "monthly".
+     * The analysis for the period and filters is computed as usual and the chosen table is sliced.
+     */
+    public org.springframework.data.domain.Page<?> getDrawerAnalysisTable(String table, boolean anomaliesOnly, String periodParam, LocalDate customStart,
+                                                                         LocalDate customEnd, Integer month, Integer year, Long cashierId,
+                                                                         String registerId, String status, org.springframework.data.domain.Pageable pageable) {
+        DrawerAnalysisDTO analysis = getDrawerAnalysis(periodParam, customStart, customEnd, month, year, cashierId, registerId, status);
+        String t = table == null ? "shifts" : table.trim();
+        switch (t) {
+            case "daily":
+                return com.neram.pos.util.PagedResponse.slice(analysis.getDailySummaries(), pageable);
+            case "monthly":
+                return com.neram.pos.util.PagedResponse.slice(analysis.getMonthlySummaries(), pageable);
+            case "shifts": {
+                java.util.List<DrawerAnalysisDTO.ShiftReconciliationItemDTO> shifts = analysis.getShifts();
+                if (anomaliesOnly) {
+                    shifts = shifts.stream().filter(s -> s.getAnomalyFlags() != null && !s.getAnomalyFlags().isEmpty()).collect(java.util.stream.Collectors.toList());
+                }
+                return com.neram.pos.util.PagedResponse.slice(shifts, pageable);
+            }
+            default:
+                throw new IllegalArgumentException("Unknown drawer table: " + table);
+        }
     }
 
     public byte[] exportDrawerAnalysisCsv(String periodParam, LocalDate customStart, LocalDate customEnd,

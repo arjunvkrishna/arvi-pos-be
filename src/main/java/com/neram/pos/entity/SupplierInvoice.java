@@ -13,7 +13,8 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Entity
 @Table(name = "supplier_invoices")
-public class SupplierInvoice {
+@org.hibernate.annotations.Filter(name = "outletScope", condition = "(outlet_id = :outletId OR outlet_id IS NULL)")
+public class SupplierInvoice implements com.neram.pos.access.OutletScoped {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -75,4 +76,7 @@ public class SupplierInvoice {
     private LocalDateTime updatedAt = LocalDateTime.now();
 
     public enum InvoiceStatus { UNPAID, PARTIAL, PAID, OVERDUE }
+
+    @Column(name = "outlet_id")
+    private Long outletId;
 }

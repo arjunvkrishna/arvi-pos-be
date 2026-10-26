@@ -37,6 +37,11 @@ public class BillResponseDTO {
     private Double promotionPercentage;
     private java.math.BigDecimal promotionDiscountAmount;
     private java.math.BigDecimal netAmount;
+    /** tip recorded at payment (not part of netAmount) */
+    private java.math.BigDecimal tipAmount;
+    /** set when the bill was paid in more than one way */
+    private java.util.List<BillRequestDTO.PaymentPart> payments;
+    private String paymentSummary;
     private String paymentMode;
     private String status;
     private String notes;
@@ -53,6 +58,9 @@ public class BillResponseDTO {
     private String voidedByName;
     private LocalDateTime voidedAt;
     private String voidReason;
+    private LocalDateTime deletedAt;
+    private String deletedByName;
+    private String deleteReason;
     private java.math.BigDecimal refundedAmount;
     private java.math.BigDecimal totalRefunded;
     private java.math.BigDecimal remainingRefundableAmount;

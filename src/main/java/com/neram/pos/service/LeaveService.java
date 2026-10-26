@@ -93,6 +93,41 @@ public class LeaveService {
                 .collect(Collectors.toList());
     }
 
+    private static final org.springframework.data.domain.Sort NEWEST_LEAVE_FIRST = org.springframework.data.domain.Sort.by(
+            org.springframework.data.domain.Sort.Order.desc("createdAt"), org.springframework.data.domain.Sort.Order.desc("id"));
+
+    /** One page of the leave requests of every employee (manager / admin view), newest first, optionally only one status. */
+    public org.springframework.data.domain.Page<LeaveResponseDTO> getLeaveRequests(String status, org.springframework.data.domain.Pageable pageable) {
+        org.springframework.data.domain.Pageable sorted = com.neram.pos.util.PagedResponse.withSort(pageable, NEWEST_LEAVE_FIRST);
+        if (status != null && !status.isBlank()) {
+            return leaveRepository.findByStatus(LeaveRequest.Status.valueOf(status.toUpperCase()), sorted).map(this::toDTO);
+        }
+        return leaveRepository.findAll(sorted).map(this::toDTO);
+    }
+
+    /** One page of one employee's leave requests, newest first (same access rules as {@link #getLeavesByEmployee(Long)}). */
+    public org.springframework.data.domain.Page<LeaveResponseDTO> getLeavesByEmployee(Long employeeId, org.springframework.data.domain.Pageable pageable) {
+        Long target = resolveLeaveEmployeeId(employeeId);
+        return leaveRepository.findByEmployeeId(target, com.neram.pos.util.PagedResponse.withSort(pageable, NEWEST_LEAVE_FIRST)).map(this::toDTO);
+    }
+
+    private Long resolveLeaveEmployeeId(Long employeeId) {
+        User currentUser = getCurrentUser();
+        if (currentUser != null && currentUser.getRole() == User.Role.EMPLOYEE) {
+            Long myEmployeeId = getAuthenticatedEmployeeId(currentUser);
+            if (employeeId != null && !employeeId.equals(myEmployeeId)) {
+                throw new AccessDeniedException("Employees may only view their own leave requests.");
+            }
+            employeeId = myEmployeeId;
+        } else if (employeeId == null && currentUser != null) {
+            employeeId = getAuthenticatedEmployeeId(currentUser);
+        }
+        if (employeeId == null) {
+            throw new IllegalArgumentException("Employee ID is required.");
+        }
+        return employeeId;
+    }
+
     public List<LeaveResponseDTO> getLeavesByStatus(String status) {
         LeaveRequest.Status st = LeaveRequest.Status.valueOf(status.toUpperCase());
         return leaveRepository.findByStatus(st).stream()

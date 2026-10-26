@@ -3,6 +3,8 @@ package com.neram.pos.controller;
 import com.neram.pos.dto.AuditLogDTO;
 import com.neram.pos.service.AuditLogService;
 import lombok.RequiredArgsConstructor;
+import com.neram.pos.util.PagedResponse;
+import org.springframework.data.domain.Pageable;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -30,9 +32,12 @@ public class AuditController {
             @RequestParam(required = false) String action,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false, defaultValue = "false") boolean billsOnly,
+            Pageable pageable) {
         String effectiveEntityType = (entityType != null && !entityType.isBlank()) ? entityType : category;
-        return ResponseEntity.ok(auditLogService.getLogs(username, effectiveEntityType, action, date, startDate, endDate));
+        return PagedResponse.of(auditLogService.getLogsPage(username, effectiveEntityType, action, date, startDate, endDate, q, billsOnly, pageable));
     }
 
     @GetMapping({"/my", "/me"})
@@ -42,7 +47,9 @@ public class AuditController {
             @RequestParam(required = false) String entityType,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
-        return ResponseEntity.ok(auditLogService.getMyLogs(action, entityType, date, startDate, endDate));
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) String q,
+            Pageable pageable) {
+        return PagedResponse.of(auditLogService.getMyLogsPage(entityType, action, date, startDate, endDate, q, pageable));
     }
 }

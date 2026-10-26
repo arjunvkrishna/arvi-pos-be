@@ -24,4 +24,9 @@ public class MenuItemDTO {
     private Boolean isAvailable;
     private Boolean active;
     private LocalDateTime createdAt;
+    /** Cafe-wide price/availability; {@code price}/{@code isAvailable} above are what the caller's branch sees. */
+    private BigDecimal basePrice;
+    private Boolean baseAvailable;
+    /** True when the caller's branch has its own price and/or availability for this item. */
+    private Boolean branchOverride;
 }

@@ -95,7 +95,7 @@ class UserControllerProfileTest {
     @DisplayName("changeOwnPassword successfully changes password and returns 200")
     void testChangeOwnPassword_Success() {
         when(auth.getName()).thenReturn("staff_jane");
-        doNothing().when(userService).changeOwnPassword("staff_jane", "OldPass@123", "NewPass@456");
+        when(userService.changeOwnPassword("staff_jane", "OldPass@123", "NewPass@456")).thenReturn("cafe~refresh");
 
         ResponseEntity<?> res = userController.changeOwnPassword(
                 Map.of("currentPassword", "OldPass@123", "newPassword", "NewPass@456"), auth);

@@ -12,6 +12,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 @Entity
 @EntityListeners(com.neram.pos.config.OrderChangeListener.class)
 @Table(name = "bill_items")
+@org.hibernate.annotations.Filter(name = "outletScope", condition = "(bill_id IN (SELECT p.id FROM bills p WHERE p.outlet_id = :outletId OR p.outlet_id IS NULL))")
 public class BillItem {
 
     @Id

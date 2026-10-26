@@ -16,7 +16,9 @@ import java.util.List;
 @Entity
 @EntityListeners(com.neram.pos.config.OrderChangeListener.class)
 @Table(name = "bills")
-public class Bill {
+@org.hibernate.annotations.SQLRestriction("deleted_at IS NULL")
+@org.hibernate.annotations.Filter(name = "outletScope", condition = "(outlet_id = :outletId OR outlet_id IS NULL)")
+public class Bill implements com.neram.pos.tenancy.TenantScoped , com.neram.pos.access.OutletScoped {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -84,6 +86,14 @@ public class Bill {
 
     @Column(name = "net_amount", nullable = false, precision = 12, scale = 2)
     private BigDecimal netAmount = BigDecimal.ZERO;
+
+    /** Tip given when the bill was paid. Not part of the net amount, GST, sales figures or the cash drawer. */
+    @Column(name = "tip_amount", nullable = false, precision = 12, scale = 2)
+    private BigDecimal tipAmount = BigDecimal.ZERO;
+
+    /** Text such as "CASH ₹200.00 + UPI ₹100.00" when the bill was paid in more than one way; null otherwise. */
+    @Column(name = "payment_summary", length = 150)
+    private String paymentSummary;
 
     @Column(name = "payment_mode", nullable = false)
     @Enumerated(EnumType.STRING)
@@ -155,6 +165,18 @@ public class Bill {
 
     @Column(name = "outlet_id")
     private Long outletId;
+
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
+    @Column(name = "deleted_by")
+    private Long deletedBy;
+
+    @Column(name = "deleted_by_name")
+    private String deletedByName;
+
+    @Column(name = "delete_reason", columnDefinition = "TEXT")
+    private String deleteReason;
 
     @OneToMany(mappedBy = "bill", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
     private List<BillItem> items = new ArrayList<>();

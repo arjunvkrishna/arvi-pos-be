@@ -14,9 +14,14 @@ public class InventoryItemRequestDTO {
     private String volumeUnit;
     private Double totalVolume;
     private java.math.BigDecimal costPerVolume;
+    private String packName;
+    private Double packSize;
     private String supplier;
     private String itemCategory;
     private Boolean active;
+    private Boolean autoDeduct;
+    private Integer shelfLifeDays;
+    private Integer expiryWarnDays;
 
     public Double getEffectiveUnitVolume() {
         if (unitVolume != null && unitVolume > 0) return unitVolume;

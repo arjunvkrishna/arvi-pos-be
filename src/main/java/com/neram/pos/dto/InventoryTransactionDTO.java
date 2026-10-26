@@ -34,5 +34,6 @@ public class InventoryTransactionDTO {
     private Double totalVolume;
     private java.math.BigDecimal costPerVolume;
     private String notes;
+    private String reasonType;
     private LocalDateTime createdAt;
 }

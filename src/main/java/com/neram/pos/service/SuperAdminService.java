@@ -2,226 +2,235 @@ package com.neram.pos.service;
 
 import com.neram.pos.dto.CafeSummaryDto;
 import com.neram.pos.dto.CreateCafeRequest;
-import com.neram.pos.entity.Employee;
-import com.neram.pos.entity.Outlet;
-import com.neram.pos.entity.Tenant;
-import com.neram.pos.entity.User;
-import com.neram.pos.repository.*;
+import com.neram.pos.repository.OutletRepository;
+import com.neram.pos.repository.UserRepository;
+import com.neram.pos.tenancy.TenantContext;
+import com.neram.pos.tenancy.TenantCrypto;
+import com.neram.pos.tenancy.TenantDatabaseAdmin;
+import com.neram.pos.tenancy.TenantMigrator;
+import com.neram.pos.tenancy.TenantProvisioner;
+import com.neram.pos.tenancy.TenantRecord;
+import com.neram.pos.tenancy.TenantRegistry;
+import com.neram.pos.tenancy.TenantRoutingDataSource;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.*;
-import java.util.stream.Collectors;
 
+/**
+ * Platform (SaaS owner) operations on cafes. Works on the control-database registry; a cafe's own database is only
+ * touched for read-only statistics and to mirror profile changes, always inside that cafe's context.
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class SuperAdminService {
 
-    private final TenantRepository tenantRepository;
+    private static final String PWD_FIELD = "db-password";
+    private static final String BRIDGE_FIELD = "bridge-token";
+    private static final Set<String> EDITABLE_STATUSES = Set.of(TenantRecord.ACTIVE, TenantRecord.SUSPENDED);
+
+    private final TenantRegistry registry;
+    private final TenantProvisioner provisioner;
+    private final TenantMigrator migrator;
+    private final TenantCrypto crypto;
+    private final TenantDatabaseAdmin dbAdmin;
+    private final TenantRoutingDataSource routing;
     private final OutletRepository outletRepository;
     private final UserRepository userRepository;
-    private final EmployeeRepository employeeRepository;
-    private final PasswordEncoder passwordEncoder;
     private final JdbcTemplate jdbcTemplate;
 
     public List<CafeSummaryDto> getAllCafes() {
-        List<Tenant> tenants = tenantRepository.findAll();
-        return tenants.stream().map(tenant -> {
-            long outletsCount = outletRepository.countByTenantId(tenant.getId());
-            long usersCount = 0;
-            long billsCount = 0;
-            BigDecimal gmv = BigDecimal.ZERO;
-            try {
-                Long uCount = jdbcTemplate.queryForObject(
-                        "SELECT count(*) FROM users WHERE tenant_id = ?", Long.class, tenant.getId());
-                if (uCount != null) usersCount = uCount;
-
-                Long bCount = jdbcTemplate.queryForObject(
-                        "SELECT count(*) FROM bills WHERE tenant_id = ? AND status = 'PAID'", Long.class, tenant.getId());
-                if (bCount != null) billsCount = bCount;
-
-                BigDecimal total = jdbcTemplate.queryForObject(
-                        "SELECT COALESCE(SUM(net_amount), 0) FROM bills WHERE tenant_id = ? AND status = 'PAID'", BigDecimal.class, tenant.getId());
-                if (total != null) gmv = total;
-            } catch (Exception e) {
-                log.warn("Could not fetch metrics for tenant {}: {}", tenant.getId(), e.getMessage());
-            }
-
-            return CafeSummaryDto.builder()
-                    .id(tenant.getId())
-                    .name(tenant.getName())
-                    .code(tenant.getCode())
-                    .contactEmail(tenant.getContactEmail())
-                    .contactPhone(tenant.getContactPhone())
-                    .address(tenant.getAddress())
-                    .subscriptionPlan(tenant.getSubscriptionPlan())
-                    .status(tenant.getStatus())
-                    .maxOutlets(tenant.getMaxOutlets())
-                    .outletsCount(outletsCount)
-                    .usersCount(usersCount)
-                    .totalBillsCount(billsCount)
-                    .totalGmv(gmv)
-                    .createdAt(tenant.getCreatedAt())
-                    .build();
-        }).collect(Collectors.toList());
+        return registry.findAll().stream().map(this::summarise).toList();
     }
 
-    @Transactional
-    public CafeSummaryDto createCafe(CreateCafeRequest req) {
-        if (req.getName() == null || req.getName().trim().isEmpty()) {
-            throw new IllegalArgumentException("Cafe name is required");
-        }
-        String code = req.getCode() != null && !req.getCode().trim().isEmpty()
-                ? req.getCode().trim().toLowerCase().replaceAll("[^a-z0-9_-]", "-")
-                : req.getName().trim().toLowerCase().replaceAll("[^a-z0-9_-]", "-");
-
-        if (tenantRepository.existsByCode(code)) {
-            code = code + "-" + System.currentTimeMillis() % 1000;
-        }
-
-        if (userRepository.existsByUsername(req.getAdminUsername())) {
-            throw new IllegalArgumentException("Admin username '" + req.getAdminUsername() + "' is already taken");
-        }
-
-        Tenant tenant = Tenant.builder()
-                .name(req.getName().trim())
-                .code(code)
-                .contactEmail(req.getContactEmail())
-                .contactPhone(req.getContactPhone())
-                .address(req.getAddress())
-                .subscriptionPlan(req.getSubscriptionPlan() != null ? req.getSubscriptionPlan() : "PRO")
-                .status("ACTIVE")
-                .maxOutlets(req.getMaxOutlets() != null && req.getMaxOutlets() > 0 ? req.getMaxOutlets() : 5)
-                .currency("INR")
-                .currencySymbol("₹")
-                .createdAt(LocalDateTime.now())
-                .updatedAt(LocalDateTime.now())
-                .build();
-        Tenant savedTenant = tenantRepository.save(tenant);
-
-        // Create initial default outlet for this cafe
-        Outlet initialOutlet = Outlet.builder()
-                .tenantId(savedTenant.getId())
-                .name("Main Branch")
-                .code("MAIN-01")
-                .address(req.getAddress())
-                .phone(req.getContactPhone())
-                .isActive(true)
-                .createdAt(LocalDateTime.now())
-                .updatedAt(LocalDateTime.now())
-                .build();
-        Outlet savedOutlet = outletRepository.save(initialOutlet);
-
-        // Create Cafe Admin Employee & User
-        Employee emp = new Employee();
-        emp.setName(req.getAdminFullName() != null && !req.getAdminFullName().trim().isEmpty()
-                ? req.getAdminFullName().trim() : req.getName() + " Admin");
-        emp.setEmail(req.getContactEmail());
-        emp.setPhone(req.getContactPhone());
-        emp.setRole(Employee.Role.ADMIN);
-        emp.setDesignation("Cafe Administrator");
-        emp.setBasicSalary(0.0);
-        emp.setJoinedDate(LocalDate.now());
-        emp.setActive(true);
-        emp.setTenantId(savedTenant.getId());
-        emp.setOutletId(savedOutlet.getId());
-        emp.setCreatedAt(LocalDateTime.now());
-        emp.setUpdatedAt(LocalDateTime.now());
-        Employee savedEmp = employeeRepository.save(emp);
-
-        User user = new User();
-        user.setUsername(req.getAdminUsername().trim());
-        user.setPasswordHash(passwordEncoder.encode(req.getAdminPassword()));
-        user.setRole(User.Role.ADMIN);
-        user.setEmployeeId(savedEmp.getId());
-        user.setTenantId(savedTenant.getId());
-        user.setOutletId(savedOutlet.getId());
-        user.setCanTakeOrders(true);
-        user.setCanManageInventory(true);
-        user.setMustChangePassword(false);
-        user.setActive(true);
-        user.setCreatedAt(LocalDateTime.now());
-        user.setUpdatedAt(LocalDateTime.now());
-        userRepository.save(user);
-
-        log.info("Super Admin created new cafe tenant '{}' (id={}) with admin '{}'",
-                savedTenant.getName(), savedTenant.getId(), user.getUsername());
-
-        return CafeSummaryDto.builder()
-                .id(savedTenant.getId())
-                .name(savedTenant.getName())
-                .code(savedTenant.getCode())
-                .contactEmail(savedTenant.getContactEmail())
-                .contactPhone(savedTenant.getContactPhone())
-                .address(savedTenant.getAddress())
-                .subscriptionPlan(savedTenant.getSubscriptionPlan())
-                .status(savedTenant.getStatus())
-                .maxOutlets(savedTenant.getMaxOutlets())
-                .outletsCount(1L)
-                .usersCount(1L)
-                .totalBillsCount(0L)
-                .totalGmv(BigDecimal.ZERO)
-                .createdAt(savedTenant.getCreatedAt())
-                .build();
+    public CafeSummaryDto createCafe(CreateCafeRequest req, String actor) {
+        TenantRecord created = provisioner.provision(req, actor);
+        return summarise(created);
     }
 
-    public Tenant updateCafeStatus(Long id, Map<String, Object> updates) {
-        Tenant tenant = tenantRepository.findById(id)
-                .orElseThrow(() -> new NoSuchElementException("Cafe not found with id: " + id));
+    public CafeSummaryDto getCafe(Long id) {
+        return summarise(require(id));
+    }
 
+    /** Updates plan/limits/status/contact in the registry and mirrors them into the cafe's own tenants row. */
+    public CafeSummaryDto updateCafe(Long id, Map<String, Object> updates, String actor) {
+        TenantRecord t = require(id);
+        String newStatus = t.status();
         if (updates.containsKey("status")) {
-            tenant.setStatus(String.valueOf(updates.get("status")));
+            String requested = String.valueOf(updates.get("status")).toUpperCase();
+            if (!EDITABLE_STATUSES.contains(requested)) {
+                throw new IllegalArgumentException("Status must be ACTIVE or SUSPENDED");
+            }
+            if (!t.isActive() && !TenantRecord.SUSPENDED.equals(t.status())) {
+                throw new IllegalArgumentException("Cafe is " + t.status() + " and cannot be changed this way");
+            }
+            newStatus = requested;
         }
-        if (updates.containsKey("subscriptionPlan")) {
-            tenant.setSubscriptionPlan(String.valueOf(updates.get("subscriptionPlan")));
+        final String status = newStatus;
+        String name = text(updates, "name", t.name());
+        String email = text(updates, "contactEmail", t.contactEmail());
+        String phone = text(updates, "contactPhone", t.contactPhone());
+        String address = text(updates, "address", t.address());
+        String plan = text(updates, "subscriptionPlan", t.subscriptionPlan());
+        int maxOutlets = updates.containsKey("maxOutlets")
+                ? Integer.parseInt(String.valueOf(updates.get("maxOutlets"))) : t.maxOutlets();
+        if (maxOutlets < 1) {
+            throw new IllegalArgumentException("maxOutlets must be at least 1");
         }
-        if (updates.containsKey("maxOutlets")) {
-            tenant.setMaxOutlets(Integer.parseInt(String.valueOf(updates.get("maxOutlets"))));
+
+        registry.updateProfile(t.id(), name, email, phone, address, plan, maxOutlets);
+        if (!status.equals(t.status())) {
+            registry.updateStatus(t.id(), status, null);
+            registry.audit(t.id(), "STATUS_" + status, actor, "was " + t.status());
         }
-        if (updates.containsKey("name")) {
-            tenant.setName(String.valueOf(updates.get("name")));
+
+        if (t.isActive() || TenantRecord.SUSPENDED.equals(t.status())) {
+            try {
+                TenantContext.runAs(t.info(), () -> jdbcTemplate.update(
+                        "UPDATE tenants SET name = ?, contact_email = ?, contact_phone = ?, address = ?, "
+                                + "subscription_plan = ?, max_outlets = ?, status = ?, updated_at = now() WHERE id = ?",
+                        name, email, phone, address, plan, maxOutlets, "ACTIVE".equals(status) ? "ACTIVE" : "SUSPENDED",
+                        t.id()));
+            } catch (Exception e) {
+                log.warn("Could not mirror profile into cafe '{}' database: {}", t.code(), e.getMessage());
+            }
         }
-        if (updates.containsKey("contactEmail")) {
-            tenant.setContactEmail(String.valueOf(updates.get("contactEmail")));
+        return summarise(require(id));
+    }
+
+    /** Connection details for support work. The password is only returned here, and every call is logged. */
+    public Map<String, Object> revealDbCredentials(Long id, String actor) {
+        TenantRecord t = require(id);
+        registry.audit(t.id(), "DB_CREDENTIALS_REVEALED", actor, "db=" + t.dbName());
+        log.warn("Platform admin '{}' revealed database credentials of cafe '{}'", actor, t.code());
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("host", t.dbHost());
+        out.put("port", t.dbPort());
+        out.put("database", t.dbName());
+        out.put("username", t.dbUser());
+        out.put("password", crypto.decrypt(t.dbPasswordEnc(), TenantCrypto.purpose(t.code(), PWD_FIELD)));
+        return out;
+    }
+
+    /** Generates a new database password, applies it in PostgreSQL, stores it and rebuilds live pools. No restart. */
+    public Map<String, Object> rotateDbPassword(Long id, String actor) {
+        TenantRecord t = require(id);
+        String newPassword = dbAdmin.generatePassword();
+        try {
+            dbAdmin.changePassword(t.dbUser(), newPassword);
+        } catch (Exception e) {
+            throw new IllegalStateException("Could not change the database password: " + e.getMessage(), e);
         }
-        if (updates.containsKey("contactPhone")) {
-            tenant.setContactPhone(String.valueOf(updates.get("contactPhone")));
-        }
-        tenant.setUpdatedAt(LocalDateTime.now());
-        return tenantRepository.save(tenant);
+        registry.updateDbPassword(t.id(), crypto.encrypt(newPassword, TenantCrypto.purpose(t.code(), PWD_FIELD)));
+        routing.evict(t.id());
+        registry.audit(t.id(), "DB_PASSWORD_ROTATED", actor, "db=" + t.dbName());
+        return Map.of("rotated", true, "database", t.dbName());
+    }
+
+    public Map<String, Object> revealBridgeToken(Long id, String actor) {
+        TenantRecord t = require(id);
+        registry.audit(t.id(), "BRIDGE_TOKEN_REVEALED", actor, null);
+        return Map.of("tenantCode", t.code(),
+                "bridgeToken", crypto.decrypt(t.bridgeTokenEnc(), TenantCrypto.purpose(t.code(), BRIDGE_FIELD)));
+    }
+
+    public Map<String, Object> rotateBridgeToken(Long id, String actor) {
+        TenantRecord t = require(id);
+        String token = dbAdmin.generateToken();
+        registry.updateBridgeToken(t.id(), crypto.encrypt(token, TenantCrypto.purpose(t.code(), BRIDGE_FIELD)));
+        registry.audit(t.id(), "BRIDGE_TOKEN_ROTATED", actor, null);
+        return Map.of("tenantCode", t.code(), "bridgeToken", token);
+    }
+
+    public CafeSummaryDto migrate(Long id) {
+        TenantRecord t = require(id);
+        migrator.migrate(t);
+        return summarise(require(id));
+    }
+
+    public List<Map<String, Object>> events(Long id) {
+        return registry.recentEvents(require(id).id(), 50);
     }
 
     public Map<String, Object> getPlatformAnalytics() {
-        long totalCafes = tenantRepository.count();
-        long totalOutlets = outletRepository.count();
-        long totalUsers = userRepository.count();
-        long totalOrders = 0;
-        BigDecimal totalGmv = BigDecimal.ZERO;
-
-        try {
-            Long bCount = jdbcTemplate.queryForObject("SELECT count(*) FROM bills WHERE status = 'PAID'", Long.class);
-            if (bCount != null) totalOrders = bCount;
-            BigDecimal gmv = jdbcTemplate.queryForObject("SELECT COALESCE(SUM(net_amount), 0) FROM bills WHERE status = 'PAID'", BigDecimal.class);
-            if (gmv != null) totalGmv = gmv;
-        } catch (Exception e) {
-            log.warn("Error calculating platform analytics: {}", e.getMessage());
+        List<TenantRecord> all = registry.findAll();
+        long outlets = 0;
+        long users = 0;
+        long orders = 0;
+        BigDecimal gmv = BigDecimal.ZERO;
+        for (TenantRecord t : all) {
+            if (!t.isActive()) {
+                continue;
+            }
+            Stats s = statsFor(t);
+            outlets += s.outlets;
+            users += s.users;
+            orders += s.bills;
+            gmv = gmv.add(s.gmv);
         }
-
         Map<String, Object> stats = new HashMap<>();
-        stats.put("totalCafes", totalCafes);
-        stats.put("totalOutlets", totalOutlets);
-        stats.put("totalUsers", totalUsers);
-        stats.put("totalOrders", totalOrders);
-        stats.put("totalGmv", totalGmv);
-        stats.put("activeCafes", totalCafes);
+        stats.put("totalCafes", all.size());
+        stats.put("totalOutlets", outlets);
+        stats.put("totalUsers", users);
+        stats.put("totalOrders", orders);
+        stats.put("totalGmv", gmv);
+        stats.put("activeCafes", all.stream().filter(TenantRecord::isActive).count());
         return stats;
+    }
+
+    private record Stats(long outlets, long users, long bills, BigDecimal gmv) {
+        static final Stats EMPTY = new Stats(0, 0, 0, BigDecimal.ZERO);
+    }
+
+    private Stats statsFor(TenantRecord t) {
+        try {
+            return TenantContext.callAs(t.info(), () -> {
+                long outlets = outletRepository.count();
+                long users = userRepository.count();
+                Long bills = jdbcTemplate.queryForObject(
+                        "SELECT count(*) FROM bills WHERE status = 'PAID'", Long.class);
+                BigDecimal gmv = jdbcTemplate.queryForObject(
+                        "SELECT COALESCE(SUM(net_amount), 0) FROM bills WHERE status = 'PAID'", BigDecimal.class);
+                return new Stats(outlets, users, bills == null ? 0 : bills, gmv == null ? BigDecimal.ZERO : gmv);
+            });
+        } catch (Exception e) {
+            log.warn("Could not fetch metrics for cafe '{}': {}", t.code(), e.getMessage());
+            return Stats.EMPTY;
+        }
+    }
+
+    private CafeSummaryDto summarise(TenantRecord t) {
+        Stats s = t.isActive() ? statsFor(t) : Stats.EMPTY;
+        return CafeSummaryDto.builder()
+                .id(t.id())
+                .name(t.name())
+                .code(t.code())
+                .contactEmail(t.contactEmail())
+                .contactPhone(t.contactPhone())
+                .address(t.address())
+                .subscriptionPlan(t.subscriptionPlan())
+                .status(t.status())
+                .maxOutlets(t.maxOutlets())
+                .dbName(t.dbName())
+                .schemaVersion(t.schemaVersion())
+                .lastError(t.lastError())
+                .outletsCount(s.outlets)
+                .usersCount(s.users)
+                .totalBillsCount(s.bills)
+                .totalGmv(s.gmv)
+                .createdAt(t.createdAt() == null ? null : t.createdAt().toLocalDateTime())
+                .build();
+    }
+
+    private TenantRecord require(Long id) {
+        return registry.findById(id).orElseThrow(() -> new NoSuchElementException("Cafe not found with id: " + id));
+    }
+
+    private static String text(Map<String, Object> m, String key, String current) {
+        return m.containsKey(key) && m.get(key) != null ? String.valueOf(m.get(key)).trim() : current;
     }
 }

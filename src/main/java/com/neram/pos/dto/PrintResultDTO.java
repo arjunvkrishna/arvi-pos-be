@@ -24,4 +24,6 @@ public class PrintResultDTO {
     private String status;
     private Integer attemptCount;
     private boolean retryable;
+    /** Non-fatal heads-up for the operator, e.g. the printer is offline so the ticket will wait in the queue. */
+    private String warning;
 }

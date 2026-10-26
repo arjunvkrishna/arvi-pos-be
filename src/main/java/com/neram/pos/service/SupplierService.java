@@ -137,6 +137,65 @@ public class SupplierService {
                 .stream().map(this::toInvoiceDTO).collect(Collectors.toList());
     }
 
+    private static final org.springframework.data.domain.Sort NEWEST_INVOICE_FIRST = org.springframework.data.domain.Sort.by(
+            org.springframework.data.domain.Sort.Order.desc("createdAt"), org.springframework.data.domain.Sort.Order.desc("id"));
+    private static final org.springframework.data.domain.Sort NEWEST_PAYMENT_FIRST = org.springframework.data.domain.Sort.by(
+            org.springframework.data.domain.Sort.Order.desc("paymentDate"), org.springframework.data.domain.Sort.Order.desc("id"));
+
+    /** One page of invoices, newest first. supplierId and status (UNPAID / PARTIAL / PAID / OVERDUE) are optional filters. */
+    public org.springframework.data.domain.Page<SupplierInvoiceDTO> getInvoices(Long supplierId, String status, org.springframework.data.domain.Pageable pageable) {
+        org.springframework.data.domain.Pageable sorted = com.neram.pos.util.PagedResponse.withSort(pageable, NEWEST_INVOICE_FIRST);
+        SupplierInvoice.InvoiceStatus st = (status == null || status.isBlank() || "ALL".equalsIgnoreCase(status)) ? null
+                : SupplierInvoice.InvoiceStatus.valueOf(status.trim().toUpperCase());
+        org.springframework.data.domain.Page<SupplierInvoice> page;
+        if (supplierId != null && st != null) page = invoiceRepo.findBySupplierIdAndStatus(supplierId, st, sorted);
+        else if (supplierId != null) page = invoiceRepo.findBySupplierId(supplierId, sorted);
+        else if (st != null) page = invoiceRepo.findByStatus(st, sorted);
+        else page = invoiceRepo.findAll(sorted);
+        return page.map(this::toInvoiceDTO);
+    }
+
+    /** One page of payments, newest first, optionally for one supplier. */
+    public org.springframework.data.domain.Page<SupplierPaymentDTO> getPayments(Long supplierId, org.springframework.data.domain.Pageable pageable) {
+        org.springframework.data.domain.Pageable sorted = com.neram.pos.util.PagedResponse.withSort(pageable, NEWEST_PAYMENT_FIRST);
+        return (supplierId != null ? paymentRepo.findBySupplierId(supplierId, sorted) : paymentRepo.findAll(sorted)).map(this::toPaymentDTO);
+    }
+
+    /**
+     * One page of suppliers (ordered by id) for the Suppliers screens. status: ACTIVE / INACTIVE (anything else = all).
+     * scope "overview" searches name, contact, phone, email and category; any other scope is the directory search over
+     * name, contact, email, GST, UPI, address, notes and bank. phone matches phone / bank account / GST ignoring punctuation.
+     */
+    public org.springframework.data.domain.Page<SupplierDTO> getSuppliers(String status, String category, String text, String phone,
+                                                                          boolean overviewScope, org.springframework.data.domain.Pageable pageable) {
+        String q = text == null ? "" : text.trim().toLowerCase();
+        String p = phone == null ? "" : phone.trim().toLowerCase().replaceAll("[^0-9+a-z]", "");
+        String cat = category == null ? "" : category.trim().toLowerCase();
+        List<Supplier> matches = supplierRepo.findAll(org.springframework.data.domain.Sort.by("id")).stream()
+                .filter(s -> !"ACTIVE".equalsIgnoreCase(status) || !Boolean.FALSE.equals(s.getActive()))
+                .filter(s -> !"INACTIVE".equalsIgnoreCase(status) || Boolean.FALSE.equals(s.getActive()))
+                .filter(s -> cat.isEmpty() || (s.getCategory() != null && s.getCategory().toLowerCase().equals(cat)))
+                .filter(s -> q.isEmpty() || (overviewScope
+                        ? containsAny(q, s.getName(), s.getContactPerson(), s.getPhone(), s.getEmail(), s.getCategory())
+                        : containsAny(q, s.getName(), s.getContactPerson(), s.getEmail(), s.getGstNumber(), s.getUpiId(), s.getAddress(), s.getNotes(), s.getBankName())))
+                .filter(s -> p.isEmpty() || containsAny(p, digitsAndLetters(s.getPhone()), digitsAndLetters(s.getBankAccount()), digitsAndLetters(s.getGstNumber())))
+                .collect(Collectors.toList());
+        // Only the suppliers on the page are converted (each carries a ledger summary query).
+        org.springframework.data.domain.Page<Supplier> page = com.neram.pos.util.PagedResponse.slice(matches, pageable);
+        return page.map(this::toDTO);
+    }
+
+    private static boolean containsAny(String needle, String... haystacks) {
+        for (String h : haystacks) {
+            if (h != null && h.toLowerCase().contains(needle)) return true;
+        }
+        return false;
+    }
+
+    private static String digitsAndLetters(String s) {
+        return s == null ? "" : s.toLowerCase().replaceAll("[^0-9+a-z]", "");
+    }
+
     public SupplierInvoiceDTO getInvoice(Long id) {
         SupplierInvoice inv = invoiceRepo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Invoice not found: " + id));
@@ -242,7 +301,13 @@ public class SupplierService {
                 invItem.setItemCategory(itemCat);
 
                 double addQty = itemReq.getQuantity();
+                double packFactor = resolvePurchaseFactor(itemReq, invItem);
+                double stockAdd = StockUnits.round3(addQty * packFactor);
                 BigDecimal unitPrice = itemReq.getUnitPrice().setScale(2, RoundingMode.HALF_UP);
+                // price of ONE stock unit (e.g. per bottle when bought per case of 12)
+                BigDecimal stockUnitPrice = packFactor > 1.0
+                        ? unitPrice.divide(BigDecimal.valueOf(packFactor), 2, RoundingMode.HALF_UP)
+                        : unitPrice;
                 BigDecimal lineTotal = unitPrice.multiply(BigDecimal.valueOf(addQty)).setScale(2, RoundingMode.HALF_UP);
                 calculatedSubtotal = calculatedSubtotal.add(lineTotal);
 
@@ -254,10 +319,10 @@ public class SupplierService {
                         ? itemReq.getVolumeUnit().trim()
                         : (invItem.getVolumeUnit() != null ? invItem.getVolumeUnit() : invItem.getUnit());
 
-                double lineTotalVol = addQty * unitVol;
-                BigDecimal costPerVol = (unitVol > 0 && unitPrice.compareTo(BigDecimal.ZERO) > 0)
-                        ? unitPrice.divide(BigDecimal.valueOf(unitVol), 2, RoundingMode.HALF_UP)
-                        : unitPrice;
+                double lineTotalVol = stockAdd * unitVol;
+                BigDecimal costPerVol = (unitVol > 0 && stockUnitPrice.compareTo(BigDecimal.ZERO) > 0)
+                        ? stockUnitPrice.divide(BigDecimal.valueOf(unitVol), 2, RoundingMode.HALF_UP)
+                        : stockUnitPrice;
 
                 // Determine item-level GST
                 Double itemGstRate = itemReq.getGstRate();
@@ -280,7 +345,7 @@ public class SupplierService {
                 calculatedTotalItemGst = calculatedTotalItemGst.add(itemGstAmount);
 
                 double prevStock = invItem.getQuantity() != null ? invItem.getQuantity() : 0.0;
-                double newStock = prevStock + addQty;
+                double newStock = StockUnits.round3(prevStock + stockAdd);
                 invItem.setQuantity(newStock);
                 invItem.setUnitVolume(unitVol);
                 invItem.setVolumeUnit(volUnit);
@@ -294,7 +359,7 @@ public class SupplierService {
                         BigDecimal newAvg = oldVal.add(addedVal).divide(BigDecimal.valueOf(newStock), 2, RoundingMode.HALF_UP);
                         invItem.setCostPerUnit(newAvg);
                     } else {
-                        invItem.setCostPerUnit(unitPrice);
+                        invItem.setCostPerUnit(stockUnitPrice);
                     }
                 }
                 if (unitVol > 0 && invItem.getCostPerUnit() != null) {
@@ -313,6 +378,11 @@ public class SupplierService {
                         .unitPrice(unitPrice)
                         .totalPrice(lineTotal)
                         .unit(invItem.getUnit())
+                        .purchaseMode(packFactor > 1.0 ? "PACK" : "UNIT")
+                        .packName(packFactor > 1.0 ? invItem.getPackName() : null)
+                        .packSize(packFactor > 1.0 ? packFactor : null)
+                        .stockQuantity(stockAdd)
+                        .expiryDate(expiryOf(itemReq, inv.getInvoiceDate()))
                         .itemCategory(itemCat)
                         .unitVolume(unitVol)
                         .volumeUnit(volUnit)
@@ -328,7 +398,7 @@ public class SupplierService {
                 InventoryTransaction txn = InventoryTransaction.builder()
                         .itemId(invItem.getId())
                         .transactionType("STOCK_IN")
-                        .quantity(addQty)
+                        .quantity(stockAdd)
                         .previousStock(prevStock)
                         .newStock(newStock)
                         .unitVolume(unitVol)
@@ -343,8 +413,9 @@ public class SupplierService {
                         .supplierName(s.getName())
                         .invoiceId(inv.getId())
                         .invoiceReference(inv.getInvoiceNumber())
-                        .unitPrice(unitPrice)
-                        .notes("Supplier Purchase: " + inv.getInvoiceNumber())
+                        .unitPrice(stockUnitPrice)
+                        .notes("Supplier Purchase: " + inv.getInvoiceNumber()
+                                + (packFactor > 1.0 ? " (" + addQty + " " + invItem.getPackName() + " x " + packFactor + " " + invItem.getUnit() + ")" : ""))
                         .createdAt(LocalDateTime.now())
                         .build();
                 transactionRepo.save(txn);
@@ -352,7 +423,8 @@ public class SupplierService {
                 auditLog.log("STOCK_IN", "INVENTORY", invItem.getId(), String.valueOf(prevStock), String.valueOf(newStock));
 
                 if (itemSummary.length() > 0) itemSummary.append(", ");
-                itemSummary.append(invItem.getName()).append(" x").append(addQty).append(" ").append(invItem.getUnit());
+                itemSummary.append(invItem.getName()).append(" x").append(addQty).append(" ")
+                        .append(packFactor > 1.0 ? invItem.getPackName() : invItem.getUnit());
                 if (unitVol > 0 && volUnit != null) {
                     itemSummary.append(" (").append(unitVol).append(" ").append(volUnit).append("/").append(invItem.getUnit()).append(")");
                 }
@@ -456,18 +528,25 @@ public class SupplierService {
             Map<Long, Double> oldStockMap = new HashMap<>();
             for (SupplierInvoiceItem oldItem : oldItems) {
                 if (oldItem.getInventoryItemId() != null) {
-                    oldStockMap.merge(oldItem.getInventoryItemId(), oldItem.getQuantity(), Double::sum);
+                    oldStockMap.merge(oldItem.getInventoryItemId(), oldItem.stockQty(), Double::sum);
                 }
+            }
+
+            // real stock before this edit starts (the history entry should show the true before/after)
+            Map<Long, Double> stockBeforeEdit = new HashMap<>();
+            for (Long oldId : oldStockMap.keySet()) {
+                inventoryItemRepo.findById(oldId).ifPresent(i -> stockBeforeEdit.put(oldId, i.getQuantity() != null ? i.getQuantity() : 0.0));
             }
 
             Map<Long, Double> newStockMap = new HashMap<>();
             for (SupplierInvoiceItemDTO itemReq : req.getItems()) {
                 if (itemReq.getInventoryItemId() != null && itemReq.getInventoryItemId() > 0) {
-                    newStockMap.merge(itemReq.getInventoryItemId(), itemReq.getQuantity() != null ? itemReq.getQuantity() : 0.0, Double::sum);
+                    InventoryItem byId = inventoryItemRepo.findById(itemReq.getInventoryItemId()).orElse(null);
+                    newStockMap.merge(itemReq.getInventoryItemId(), requestStockQty(itemReq, byId), Double::sum);
                 } else if (itemReq.getProductName() != null && !itemReq.getProductName().trim().isEmpty()) {
                     InventoryItem existing = inventoryItemRepo.findByNameIgnoreCaseAndActiveTrue(itemReq.getProductName().trim()).orElse(null);
                     if (existing != null) {
-                        newStockMap.merge(existing.getId(), itemReq.getQuantity() != null ? itemReq.getQuantity() : 0.0, Double::sum);
+                        newStockMap.merge(existing.getId(), requestStockQty(itemReq, existing), Double::sum);
                     }
                 }
             }
@@ -492,7 +571,8 @@ public class SupplierService {
                     InventoryItem invItem = inventoryItemRepo.findById(oldItem.getInventoryItemId()).orElse(null);
                     if (invItem != null) {
                         double prevStock = invItem.getQuantity() != null ? invItem.getQuantity() : 0.0;
-                        invItem.setQuantity(Math.max(0.0, prevStock - oldItem.getQuantity()));
+                        // no clamp at 0: stock already issued must stay issued (the check above guarantees the final stock is not negative)
+                        invItem.setQuantity(StockUnits.round3(prevStock - oldItem.stockQty()));
                         invItem.setLastUpdated(LocalDateTime.now());
                         inventoryItemRepo.save(invItem);
                     }
@@ -565,7 +645,13 @@ public class SupplierService {
                 invItem.setItemCategory(itemCat);
 
                 double addQty = itemReq.getQuantity();
+                double packFactor = resolvePurchaseFactor(itemReq, invItem);
+                double stockAdd = StockUnits.round3(addQty * packFactor);
                 BigDecimal unitPrice = itemReq.getUnitPrice().setScale(2, RoundingMode.HALF_UP);
+                // price of ONE stock unit (e.g. per bottle when bought per case of 12)
+                BigDecimal stockUnitPrice = packFactor > 1.0
+                        ? unitPrice.divide(BigDecimal.valueOf(packFactor), 2, RoundingMode.HALF_UP)
+                        : unitPrice;
                 BigDecimal lineTotal = unitPrice.multiply(BigDecimal.valueOf(addQty)).setScale(2, RoundingMode.HALF_UP);
                 calculatedSubtotal = calculatedSubtotal.add(lineTotal);
 
@@ -577,10 +663,10 @@ public class SupplierService {
                         ? itemReq.getVolumeUnit().trim()
                         : (invItem.getVolumeUnit() != null ? invItem.getVolumeUnit() : invItem.getUnit());
 
-                double lineTotalVol = addQty * unitVol;
-                BigDecimal costPerVol = (unitVol > 0 && unitPrice.compareTo(BigDecimal.ZERO) > 0)
-                        ? unitPrice.divide(BigDecimal.valueOf(unitVol), 2, RoundingMode.HALF_UP)
-                        : unitPrice;
+                double lineTotalVol = stockAdd * unitVol;
+                BigDecimal costPerVol = (unitVol > 0 && stockUnitPrice.compareTo(BigDecimal.ZERO) > 0)
+                        ? stockUnitPrice.divide(BigDecimal.valueOf(unitVol), 2, RoundingMode.HALF_UP)
+                        : stockUnitPrice;
 
                 // Determine item-level GST
                 Double itemGstRate = itemReq.getGstRate();
@@ -603,7 +689,7 @@ public class SupplierService {
                 calculatedTotalItemGst = calculatedTotalItemGst.add(itemGstAmount);
 
                 double prevStock = invItem.getQuantity() != null ? invItem.getQuantity() : 0.0;
-                double newStock = prevStock + addQty;
+                double newStock = StockUnits.round3(prevStock + stockAdd);
                 invItem.setQuantity(newStock);
                 invItem.setUnitVolume(unitVol);
                 invItem.setVolumeUnit(volUnit);
@@ -616,7 +702,7 @@ public class SupplierService {
                         BigDecimal newAvg = oldVal.add(addedVal).divide(BigDecimal.valueOf(newStock), 2, RoundingMode.HALF_UP);
                         invItem.setCostPerUnit(newAvg);
                     } else {
-                        invItem.setCostPerUnit(unitPrice);
+                        invItem.setCostPerUnit(stockUnitPrice);
                     }
                 }
                 if (unitVol > 0 && invItem.getCostPerUnit() != null) {
@@ -635,6 +721,11 @@ public class SupplierService {
                         .unitPrice(unitPrice)
                         .totalPrice(lineTotal)
                         .unit(invItem.getUnit())
+                        .purchaseMode(packFactor > 1.0 ? "PACK" : "UNIT")
+                        .packName(packFactor > 1.0 ? invItem.getPackName() : null)
+                        .packSize(packFactor > 1.0 ? packFactor : null)
+                        .stockQuantity(stockAdd)
+                        .expiryDate(expiryOf(itemReq, inv.getInvoiceDate()))
                         .itemCategory(itemCat)
                         .unitVolume(unitVol)
                         .volumeUnit(volUnit)
@@ -647,11 +738,13 @@ public class SupplierService {
                 invoiceItemRepo.save(invoiceItem);
 
                 // Save inventory transaction
+                double histPrev = stockBeforeEdit.getOrDefault(invItem.getId(), prevStock);
+                double netChange = StockUnits.round3(newStock - histPrev);
                 InventoryTransaction txn = InventoryTransaction.builder()
                         .itemId(invItem.getId())
-                        .transactionType("STOCK_IN")
-                        .quantity(addQty)
-                        .previousStock(prevStock)
+                        .transactionType(netChange >= 0 ? "STOCK_IN" : "STOCK_OUT")
+                        .quantity(Math.abs(netChange))
+                        .previousStock(histPrev)
                         .newStock(newStock)
                         .unitVolume(unitVol)
                         .volumeUnit(volUnit)
@@ -665,16 +758,18 @@ public class SupplierService {
                         .supplierName(s != null ? s.getName() : null)
                         .invoiceId(inv.getId())
                         .invoiceReference(inv.getInvoiceNumber())
-                        .unitPrice(unitPrice)
-                        .notes("Supplier Purchase Update: " + inv.getInvoiceNumber())
+                        .unitPrice(stockUnitPrice)
+                        .notes("Supplier Purchase Update: " + inv.getInvoiceNumber()
+                                + (packFactor > 1.0 ? " (" + addQty + " " + invItem.getPackName() + " x " + packFactor + " " + invItem.getUnit() + ")" : ""))
                         .createdAt(LocalDateTime.now())
                         .build();
-                transactionRepo.save(txn);
+                if (Math.abs(netChange) > 0.0004) transactionRepo.save(txn);
 
                 auditLog.log("STOCK_IN", "INVENTORY", invItem.getId(), String.valueOf(prevStock), String.valueOf(newStock));
 
                 if (itemSummary.length() > 0) itemSummary.append(", ");
-                itemSummary.append(invItem.getName()).append(" x").append(addQty).append(" ").append(invItem.getUnit());
+                itemSummary.append(invItem.getName()).append(" x").append(addQty).append(" ")
+                        .append(packFactor > 1.0 ? invItem.getPackName() : invItem.getUnit());
                 if (unitVol > 0 && volUnit != null) {
                     itemSummary.append(" (").append(unitVol).append(" ").append(volUnit).append("/").append(invItem.getUnit()).append(")");
                 }
@@ -769,8 +864,8 @@ public class SupplierService {
         for (SupplierInvoiceItem item : items) {
             if (item.getInventoryItemId() != null) {
                 InventoryItem invItem = inventoryItemRepo.findById(item.getInventoryItemId()).orElse(null);
-                if (invItem != null && invItem.getQuantity() - item.getQuantity() < 0) {
-                    throw new RuntimeException("Cannot delete invoice: reversing " + item.getQuantity() + " " + item.getUnit()
+                if (invItem != null && invItem.getQuantity() - item.stockQty() < -0.0005) {
+                    throw new RuntimeException("Cannot delete invoice: reversing " + item.stockQty() + " " + item.getUnit()
                             + " would result in negative stock for " + invItem.getName() + " (current: " + invItem.getQuantity() + ").");
                 }
             }
@@ -789,7 +884,7 @@ public class SupplierService {
                 InventoryItem invItem = inventoryItemRepo.findById(item.getInventoryItemId()).orElse(null);
                 if (invItem != null) {
                     double prevStock = invItem.getQuantity();
-                    double newStock = Math.max(0.0, prevStock - item.getQuantity());
+                    double newStock = Math.max(0.0, StockUnits.round3(prevStock - item.stockQty()));
                     invItem.setQuantity(newStock);
                     invItem.setLastUpdated(LocalDateTime.now());
                     inventoryItemRepo.save(invItem);
@@ -797,7 +892,7 @@ public class SupplierService {
                     InventoryTransaction txn = InventoryTransaction.builder()
                             .itemId(invItem.getId())
                             .transactionType("ADJUSTMENT")
-                            .quantity(item.getQuantity())
+                            .quantity(item.stockQty())
                             .previousStock(prevStock)
                             .newStock(newStock)
                             .userId(userId)
@@ -1096,9 +1191,45 @@ public class SupplierService {
         return dto;
     }
 
+    /**
+     * Stock units that ONE purchased unit stands for: the pack size when the line is entered
+     * by pack (e.g. cases of 12 bottles), otherwise 1. A pack definition sent on the line
+     * (pack name + size) is saved on the item so the next purchase remembers it.
+     */
+    /** The expiry date typed on a purchase line, if any. It cannot be earlier than the invoice date. */
+    private LocalDate expiryOf(SupplierInvoiceItemDTO req, LocalDate invoiceDate) {
+        LocalDate expiry = req.getExpiryDate();
+        if (expiry != null && invoiceDate != null && expiry.isBefore(invoiceDate)) {
+            throw new IllegalArgumentException("Expiry date of " + (req.getProductName() != null ? req.getProductName() : "an item") + " cannot be before the invoice date.");
+        }
+        return expiry;
+    }
+
+    private double resolvePurchaseFactor(SupplierInvoiceItemDTO req, InventoryItem inv) {
+        if (!"PACK".equalsIgnoreCase(req.getPurchaseMode())) return 1.0;
+        Double size = StockUnits.normalizePackSize(req.getPackSize() != null ? req.getPackSize() : inv.getPackSize());
+        if (size == null) {
+            throw new IllegalArgumentException("Enter how many " + inv.getUnit() + " are in one pack for \""
+                    + inv.getName() + "\" (or buy it by " + inv.getUnit() + ").");
+        }
+        inv.setPackSize(size);
+        String name = StockUnits.normalizePackName(req.getPackName());
+        if (name != null) inv.setPackName(name);
+        else if (inv.getPackName() == null) inv.setPackName("pack");
+        return size;
+    }
+
+    /** Stock units a request line adds, without changing anything (used to validate edits). */
+    private double requestStockQty(SupplierInvoiceItemDTO req, InventoryItem inv) {
+        double qty = req.getQuantity() != null ? req.getQuantity() : 0.0;
+        if (!"PACK".equalsIgnoreCase(req.getPurchaseMode()) || inv == null) return qty;
+        Double size = StockUnits.normalizePackSize(req.getPackSize() != null ? req.getPackSize() : inv.getPackSize());
+        return size == null ? qty : StockUnits.round3(qty * size);
+    }
+
     private SupplierInvoiceItemDTO toItemDTO(SupplierInvoiceItem item) {
         Double unitVol = item.getUnitVolume() != null ? item.getUnitVolume() : 1.0;
-        Double totalVol = item.getTotalVolume() != null ? item.getTotalVolume() : (item.getQuantity() * unitVol);
+        Double totalVol = item.getTotalVolume() != null ? item.getTotalVolume() : (item.stockQty() * unitVol);
         String volUnit = item.getVolumeUnit() != null ? item.getVolumeUnit() : item.getUnit();
         BigDecimal costPerVol = item.getCostPerVolume();
         if (costPerVol == null && unitVol > 0 && item.getUnitPrice() != null && item.getUnitPrice().compareTo(BigDecimal.ZERO) > 0) {
@@ -1114,6 +1245,11 @@ public class SupplierService {
                 .unitPrice(item.getUnitPrice())
                 .totalPrice(item.getTotalPrice())
                 .unit(item.getUnit())
+                .purchaseMode(item.getPurchaseMode())
+                .packName(item.getPackName())
+                .packSize(item.getPackSize())
+                .stockQuantity(item.stockQty())
+                .expiryDate(item.getExpiryDate())
                 .itemCategory(item.getItemCategory() != null ? item.getItemCategory() : "Stock")
                 .unitVolume(unitVol)
                 .volume(unitVol)

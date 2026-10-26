@@ -18,4 +18,6 @@ public interface PromotionRepository extends JpaRepository<Promotion, Long> {
     List<Promotion> findActivePromotionsAt(@Param("now") LocalDateTime now);
 
     List<Promotion> findAllByOrderByCreatedAtDesc();
+
+    org.springframework.data.domain.Page<Promotion> findAllByOrderByCreatedAtDesc(org.springframework.data.domain.Pageable pageable);
 }

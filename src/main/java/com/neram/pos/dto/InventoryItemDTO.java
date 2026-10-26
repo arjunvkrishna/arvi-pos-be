@@ -23,10 +23,21 @@ public class InventoryItemDTO {
     private String volumeUnit;
     private Double totalVolume;
     private java.math.BigDecimal costPerVolume;
+    private String packName;
+    private Double packSize;
     private String supplier;
     private String itemCategory;
     private Boolean active;
     private Boolean lowStock;
+    /** false = issued by hand; dishes selling do not reduce this item's stock */
+    private Boolean autoDeduct;
+    private Integer shelfLifeDays;
+    private Integer expiryWarnDays;
+    /** earliest expiry that matters (an expired or soon-to-expire batch first), with its status and the quantity affected */
+    private java.time.LocalDate nextExpiryDate;
+    /** null = no expiry tracked, OK, SOON or EXPIRED */
+    private String expiryStatus;
+    private Double expiringQuantity;
     private LocalDateTime lastUpdated;
     private LocalDateTime createdAt;
 

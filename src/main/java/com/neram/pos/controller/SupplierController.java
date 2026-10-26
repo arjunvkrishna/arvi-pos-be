@@ -4,6 +4,8 @@ import com.neram.pos.dto.*;
 import com.neram.pos.repository.UserRepository;
 import com.neram.pos.service.SupplierService;
 import lombok.RequiredArgsConstructor;
+import com.neram.pos.util.PagedResponse;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -28,7 +30,16 @@ public class SupplierController {
             @RequestParam(defaultValue = "true") boolean activeOnly,
             @RequestParam(required = false) String query,
             @RequestParam(required = false) String phone,
-            @RequestParam(required = false) String category) {
+            @RequestParam(required = false) String category,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String text,
+            @RequestParam(required = false) String scope,
+            Pageable pageable) {
+        // Paged / screen-filtered request (status, text, scope): the Suppliers screens
+        if (pageable.isPaged() || status != null || text != null || scope != null) {
+            String effectiveStatus = status != null ? status : (activeOnly ? "ACTIVE" : "ALL");
+            return PagedResponse.of(supplierService.getSuppliers(effectiveStatus, category, text, phone, "overview".equalsIgnoreCase(scope), pageable));
+        }
         if ((query != null && !query.trim().isEmpty()) || (phone != null && !phone.trim().isEmpty()) || (category != null && !category.trim().isEmpty())) {
             return ResponseEntity.ok(supplierService.searchSuppliers(query, phone, category, activeOnly));
         }
@@ -83,8 +94,9 @@ public class SupplierController {
 
     @GetMapping("/invoices")
     @PreAuthorize("hasAnyRole('ADMIN','MANAGER')")
-    public ResponseEntity<List<SupplierInvoiceDTO>> getAllInvoices() {
-        return ResponseEntity.ok(supplierService.getAllInvoices());
+    public ResponseEntity<List<SupplierInvoiceDTO>> getAllInvoices(
+            @RequestParam(required = false) String status, Pageable pageable) {
+        return PagedResponse.of(supplierService.getInvoices(null, status, pageable));
     }
 
     @GetMapping("/invoices/outstanding")
@@ -96,8 +108,8 @@ public class SupplierController {
     @GetMapping("/{supplierId}/invoices")
     @PreAuthorize("hasAnyRole('ADMIN','MANAGER')")
     public ResponseEntity<List<SupplierInvoiceDTO>> getInvoicesBySupplier(
-            @PathVariable Long supplierId) {
-        return ResponseEntity.ok(supplierService.getInvoicesBySupplier(supplierId));
+            @PathVariable Long supplierId, @RequestParam(required = false) String status, Pageable pageable) {
+        return PagedResponse.of(supplierService.getInvoices(supplierId, status, pageable));
     }
 
     @GetMapping("/invoices/{id}")
@@ -133,8 +145,8 @@ public class SupplierController {
 
     @GetMapping("/payments")
     @PreAuthorize("hasAnyRole('ADMIN','MANAGER')")
-    public ResponseEntity<List<SupplierPaymentDTO>> getAllPayments() {
-        return ResponseEntity.ok(supplierService.getAllPayments());
+    public ResponseEntity<List<SupplierPaymentDTO>> getAllPayments(Pageable pageable) {
+        return PagedResponse.of(supplierService.getPayments(null, pageable));
     }
 
     @GetMapping("/invoices/{invoiceId}/payments")
@@ -147,8 +159,8 @@ public class SupplierController {
     @GetMapping("/{supplierId}/payments")
     @PreAuthorize("hasAnyRole('ADMIN','MANAGER')")
     public ResponseEntity<List<SupplierPaymentDTO>> getPaymentsBySupplier(
-            @PathVariable Long supplierId) {
-        return ResponseEntity.ok(supplierService.getPaymentsBySupplier(supplierId));
+            @PathVariable Long supplierId, Pageable pageable) {
+        return PagedResponse.of(supplierService.getPayments(supplierId, pageable));
     }
 
     @PostMapping("/payments")

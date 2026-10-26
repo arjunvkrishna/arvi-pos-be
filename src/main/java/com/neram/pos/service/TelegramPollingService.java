@@ -13,7 +13,7 @@ import java.util.List;
 public class TelegramPollingService {
 
     private final TelegramBotClient botClient;
-    private final TelegramNotificationService notificationService;
+    private final TelegramUpdateRouter updateRouter;
 
     private Long lastOffset = null;
     private boolean webhookActive = false;
@@ -32,7 +32,7 @@ public class TelegramPollingService {
             List<TelegramBotClient.IncomingTelegramMessage> updates = botClient.getUpdates(lastOffset, 2);
             for (TelegramBotClient.IncomingTelegramMessage msg : updates) {
                 lastOffset = msg.getUpdateId() + 1;
-                notificationService.processIncomingTelegramUpdate(
+                updateRouter.route(
                         msg.getText(),
                         msg.getChatId(),
                         msg.getUsername(),

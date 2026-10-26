@@ -37,6 +37,10 @@ public class Tenant {
     @Column(name = "gst_number")
     private String gstNumber;
 
+    /** A short line or quote shown under the cafe name (public menu, login screen). */
+    @Column(length = 200)
+    private String tagline;
+
     @Column(name = "logo_url", columnDefinition = "TEXT")
     private String logoUrl;
 

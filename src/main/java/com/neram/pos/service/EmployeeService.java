@@ -59,6 +59,30 @@ public class EmployeeService {
                 .collect(Collectors.toList());
     }
 
+    /** One page of {@link #getAllEmployees(String)} (same visibility rules), ordered by id. */
+    public org.springframework.data.domain.Page<EmployeeDTO> getAllEmployees(String callerRole, org.springframework.data.domain.Pageable pageable) {
+        org.springframework.data.domain.Pageable sorted = com.neram.pos.util.PagedResponse.withSort(pageable, org.springframework.data.domain.Sort.by("id"));
+        org.springframework.data.domain.Page<Employee> page;
+        if ("ADMIN".equalsIgnoreCase(callerRole)) {
+            page = employeeRepository.findByActiveTrue(sorted);
+        } else if ("MANAGER".equalsIgnoreCase(callerRole)) {
+            page = employeeRepository.findByActiveTrueAndRoleNot(Employee.Role.ADMIN, sorted);
+        } else {
+            page = employeeRepository.findByRoleAndActiveTrue(Employee.Role.EMPLOYEE, sorted);
+        }
+        return page.map(this::toDTO);
+    }
+
+    /** One page of {@link #getEmployeesByRole(String, String)}, ordered by id. */
+    public org.springframework.data.domain.Page<EmployeeDTO> getEmployeesByRole(String roleStr, String callerRole, org.springframework.data.domain.Pageable pageable) {
+        Employee.Role role = Employee.Role.valueOf(roleStr.toUpperCase());
+        if ("MANAGER".equalsIgnoreCase(callerRole) && role == Employee.Role.ADMIN) {
+            throw new RuntimeException("Access denied: Managers cannot view Admin accounts");
+        }
+        return employeeRepository.findByRoleAndActiveTrue(role, com.neram.pos.util.PagedResponse.withSort(pageable, org.springframework.data.domain.Sort.by("id")))
+                .map(this::toDTO);
+    }
+
     public EmployeeDTO getEmployeeById(Long id, String callerRole) {
         Employee emp = employeeRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Employee not found with id: " + id));

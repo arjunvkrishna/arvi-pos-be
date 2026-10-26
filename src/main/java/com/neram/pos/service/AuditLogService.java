@@ -181,6 +181,86 @@ public class AuditLogService {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * One page of the audit log (admin view), newest first. Every filter is optional and applied in the database:
+     * user, entity type (category), action, one day or a date range, free text over action / user / entity / old and new value /
+     * entity id, and billsOnly (bill entity or an action with BILL in its name). Without page/size it falls back to the
+     * bounded list from {@link #getLogs}.
+     */
+    public org.springframework.data.domain.Page<AuditLogDTO> getLogsPage(String username, String entityType, String action,
+                                                                         LocalDate date, LocalDate startDate, LocalDate endDate,
+                                                                         String q, boolean billsOnly, org.springframework.data.domain.Pageable pageable) {
+        if ((pageable == null || pageable.isUnpaged()) && (q == null || q.isBlank()) && !billsOnly) {
+            List<AuditLogDTO> all = getLogs(username, entityType, action, date, startDate, endDate);
+            return new org.springframework.data.domain.PageImpl<>(all, org.springframework.data.domain.Pageable.unpaged(), all.size());
+        }
+        String u = (username != null && !username.isBlank() && !username.equalsIgnoreCase("ALL")) ? username.trim() : null;
+        return findAuditPage(auditSpec(u, null, null, entityType, action, date, startDate, endDate, q, billsOnly), pageable);
+    }
+
+    /** One page of the signed-in user's own audit trail, newest first (same optional filters as {@link #getLogsPage}). */
+    public org.springframework.data.domain.Page<AuditLogDTO> getMyLogsPage(String entityType, String action, LocalDate date,
+                                                                           LocalDate startDate, LocalDate endDate, String q,
+                                                                           org.springframework.data.domain.Pageable pageable) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getPrincipal())) {
+            throw new AccessDeniedException("Authentication required to access personal audit logs");
+        }
+        String currentUsername = auth.getName();
+        User currentUser = userRepository.findByUsername(currentUsername).orElse(null);
+        Long currentUserId = currentUser != null ? currentUser.getId() : null;
+        return findAuditPage(auditSpec(null, currentUsername, currentUserId, entityType, action, date, startDate, endDate, q, false), pageable);
+    }
+
+    private org.springframework.data.domain.Page<AuditLogDTO> findAuditPage(org.springframework.data.jpa.domain.Specification<AuditLog> spec,
+                                                                           org.springframework.data.domain.Pageable pageable) {
+        org.springframework.data.domain.Sort newestFirst = org.springframework.data.domain.Sort.by(
+                org.springframework.data.domain.Sort.Order.desc("performedAt"), org.springframework.data.domain.Sort.Order.desc("id"));
+        // No page requested: stay bounded like getLogs (newest MAX_LOG_ROWS) so a wide filter never loads the whole table.
+        org.springframework.data.domain.Pageable bounded = (pageable == null || pageable.isUnpaged())
+                ? org.springframework.data.domain.PageRequest.of(0, MAX_LOG_ROWS, newestFirst)
+                : com.neram.pos.util.PagedResponse.withSort(pageable, newestFirst);
+        return auditLogRepository.findAll(spec, bounded).map(this::toDTO);
+    }
+
+    private org.springframework.data.jpa.domain.Specification<AuditLog> auditSpec(String userFilter, String ownerName, Long ownerId,
+                                                                                 String entityType, String action, LocalDate date,
+                                                                                 LocalDate startDate, LocalDate endDate, String q, boolean billsOnly) {
+        String e = (entityType != null && !entityType.isBlank() && !entityType.equalsIgnoreCase("ALL")) ? entityType.trim() : null;
+        String a = (action != null && !action.isBlank() && !action.equalsIgnoreCase("ALL")) ? action.trim() : null;
+        LocalDate start = date != null ? date : startDate;
+        LocalDate end = date != null ? date : endDate;
+        String pattern = com.neram.pos.util.LikeSearch.pattern(q);
+
+        return (root, query, cb) -> {
+            List<jakarta.persistence.criteria.Predicate> p = new ArrayList<>();
+            if (ownerName != null) {
+                // The signed-in user's own rows: by username or user id
+                p.add(ownerId != null
+                        ? cb.or(cb.equal(cb.lower(root.get("performedByName")), ownerName.toLowerCase()), cb.equal(root.get("performedBy"), ownerId))
+                        : cb.equal(cb.lower(root.get("performedByName")), ownerName.toLowerCase()));
+            }
+            if (userFilter != null) p.add(cb.equal(cb.lower(root.get("performedByName")), userFilter.toLowerCase()));
+            if (e != null) p.add(cb.equal(cb.upper(root.get("entityType")), e.toUpperCase()));
+            if (a != null) p.add(cb.equal(cb.upper(root.get("action")), a.toUpperCase()));
+            if (billsOnly) {
+                p.add(cb.or(cb.equal(cb.upper(root.get("entityType")), "BILL"), cb.like(cb.upper(root.<String>get("action")), "%BILL%")));
+            }
+            if (start != null) p.add(cb.greaterThanOrEqualTo(root.get("performedAt"), start.atStartOfDay()));
+            if (end != null) p.add(cb.lessThanOrEqualTo(root.get("performedAt"), end.atTime(LocalTime.MAX)));
+            if (pattern != null) {
+                p.add(cb.or(
+                        com.neram.pos.util.LikeSearch.contains(cb, root.get("action"), pattern),
+                        com.neram.pos.util.LikeSearch.contains(cb, root.get("performedByName"), pattern),
+                        com.neram.pos.util.LikeSearch.contains(cb, root.get("entityType"), pattern),
+                        com.neram.pos.util.LikeSearch.contains(cb, root.get("oldValue"), pattern),
+                        com.neram.pos.util.LikeSearch.contains(cb, root.get("newValue"), pattern),
+                        cb.like(cb.function("str", String.class, root.get("entityId")), pattern, com.neram.pos.util.LikeSearch.ESCAPE)));
+            }
+            return cb.and(p.toArray(new jakarta.persistence.criteria.Predicate[0]));
+        };
+    }
+
     private AuditLogDTO toDTO(AuditLog a) {
         return AuditLogDTO.builder()
                 .id(a.getId())

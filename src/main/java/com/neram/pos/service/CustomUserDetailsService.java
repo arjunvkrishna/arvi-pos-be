@@ -57,6 +57,10 @@ public class CustomUserDetailsService implements UserDetailsService {
         if (canTakeOrders) {
             authorities.add(new SimpleGrantedAuthority("PERM_TAKE_ORDERS"));
         }
+        boolean canPrintBill = isElevated || Boolean.TRUE.equals(user.getCanPrintBill());
+        if (canPrintBill) {
+            authorities.add(new SimpleGrantedAuthority("PERM_PRINT_BILL"));
+        }
         if (canManageInventory) {
             authorities.add(new SimpleGrantedAuthority("PERM_MANAGE_INVENTORY"));
         }
@@ -67,14 +71,16 @@ public class CustomUserDetailsService implements UserDetailsService {
             authorities.add(new SimpleGrantedAuthority("PERM_VIEW_REPORTS"));
         }
 
-        return new org.springframework.security.core.userdetails.User(
+        com.neram.pos.access.AccessPolicy.managementAuthorities(user)
+                .forEach(a -> authorities.add(new SimpleGrantedAuthority(a)));
+
+        return new com.neram.pos.access.CafeUserDetails(
                 user.getUsername(),
                 user.getPasswordHash(),
                 isEnabled,
-                true,
-                true,
-                true,
-                authorities
-        );
+                authorities,
+                user.getId(),
+                user.getRole(),
+                user.getOutletId());
     }
 }

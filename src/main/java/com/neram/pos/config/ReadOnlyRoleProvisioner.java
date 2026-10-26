@@ -40,6 +40,11 @@ public class ReadOnlyRoleProvisioner implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
+        // Each cafe has its own database and no cafe is selected at startup; the old single-database role is skipped.
+        if (com.neram.pos.tenancy.TenantContext.current().isEmpty()) {
+            log.debug("Read-only DB role provisioning skipped: databases are per cafe");
+            return;
+        }
         try {
             provision();
         } catch (Exception e) {

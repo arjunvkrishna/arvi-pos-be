@@ -39,7 +39,6 @@ ENV TZ=Asia/Kolkata
 ENV JAVA_OPTS="-XX:+UseSerialGC -Xms64m -Xmx320m -XX:MaxMetaspaceSize=160m -Xss512k -XX:ReservedCodeCacheSize=64m -XX:TieredStopAtLevel=1 -XX:MaxHeapFreeRatio=30 -XX:MinHeapFreeRatio=10 -XX:+ExitOnOutOfMemoryError"
 
 COPY --from=build /app/target/*.jar app.jar
-COPY logo-05.png .
 
 RUN mkdir -p /app/logs && chown -R 10001:10001 /app/logs
 

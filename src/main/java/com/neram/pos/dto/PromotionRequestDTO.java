@@ -6,6 +6,8 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.util.List;
 
 @Data
 @NoArgsConstructor
@@ -18,4 +20,8 @@ public class PromotionRequestDTO {
     private LocalDateTime endDateTime;
     private Boolean isActive;
     private String description;
+    private Boolean recurring;
+    private List<Integer> daysOfWeek;
+    private LocalTime dailyStart;
+    private LocalTime dailyEnd;
 }

@@ -4,6 +4,7 @@ import com.neram.pos.dto.AttendanceAuditDTO;
 import com.neram.pos.dto.AttendanceDTO;
 import com.neram.pos.dto.AttendanceMonthlySummaryDTO;
 import com.neram.pos.dto.AttendanceRequestDTO;
+import com.neram.pos.dto.PunchStatusDTO;
 import com.neram.pos.entity.Attendance;
 import com.neram.pos.entity.Employee;
 import com.neram.pos.entity.User;
@@ -136,6 +137,39 @@ public class AttendanceService {
                 .collect(Collectors.toList());
     }
 
+    /** One page of the attendance records of a day (default today), in the order they were recorded. */
+    public org.springframework.data.domain.Page<AttendanceDTO> getAttendanceByDate(LocalDate date, org.springframework.data.domain.Pageable pageable) {
+        LocalDate queryDate = date != null ? date : LocalDate.now();
+        return attendanceRepository.findByDate(queryDate, com.neram.pos.util.PagedResponse.withSort(pageable, org.springframework.data.domain.Sort.by("id")))
+                .map(this::toDTO);
+    }
+
+    /** One page of an employee's attendance records, newest day first (same access rules as {@link #getAttendanceByEmployee(Long)}). */
+    public org.springframework.data.domain.Page<AttendanceDTO> getAttendanceByEmployee(Long employeeId, org.springframework.data.domain.Pageable pageable) {
+        User currentUser = getCurrentUser();
+        if (currentUser != null && currentUser.getRole() == User.Role.EMPLOYEE) {
+            Long myEmployeeId = getAuthenticatedEmployeeId(currentUser);
+            if (employeeId != null && !employeeId.equals(myEmployeeId)) {
+                throw new AccessDeniedException("Employees may only view their own attendance.");
+            }
+            employeeId = myEmployeeId;
+        } else if (employeeId == null && currentUser != null) {
+            employeeId = getAuthenticatedEmployeeId(currentUser);
+        }
+        if (employeeId == null) {
+            throw new IllegalArgumentException("Employee ID is required.");
+        }
+        org.springframework.data.domain.Sort newestDayFirst = org.springframework.data.domain.Sort.by(
+                org.springframework.data.domain.Sort.Order.desc("date"), org.springframework.data.domain.Sort.Order.desc("id"));
+        return attendanceRepository.findByEmployeeId(employeeId, com.neram.pos.util.PagedResponse.withSort(pageable, newestDayFirst)).map(this::toDTO);
+    }
+
+    /** One page of the active employees' monthly summaries (ordered by employee id); only the page's employees are computed. */
+    public org.springframework.data.domain.Page<AttendanceMonthlySummaryDTO> getAllEmployeesMonthlySummary(int year, int month, org.springframework.data.domain.Pageable pageable) {
+        return employeeRepository.findByActiveTrue(com.neram.pos.util.PagedResponse.withSort(pageable, org.springframework.data.domain.Sort.by("id")))
+                .map(emp -> getMonthlySummary(emp.getId(), year, month));
+    }
+
     public List<AttendanceDTO> getAttendanceRange(Long employeeId, LocalDate start, LocalDate end) {
         User currentUser = getCurrentUser();
         if (currentUser != null && currentUser.getRole() == User.Role.EMPLOYEE) {
@@ -202,6 +236,43 @@ public class AttendanceService {
             return getAuthenticatedEmployeeId(currentUser);
         }
         return providedId != null ? providedId : 1L;
+    }
+
+    /**
+     * Is a shift open right now? Same idea as check-out: an open record today counts; with no record at all today, an open record
+     * from yesterday counts (a shift that runs past midnight). A read only: it never creates an employee record.
+     */
+    @Transactional(readOnly = true)
+    public PunchStatusDTO getPunchStatus(Long providedId) {
+        Long employeeId = lookupEmployeeIdWithoutCreating(providedId);
+        if (employeeId == null) return PunchStatusDTO.builder().checkedIn(false).build();
+
+        LocalDate today = LocalDate.now();
+        List<Attendance> todayRecords = attendanceRepository.findByEmployeeIdAndDateOrderByIdDesc(employeeId, today);
+        Attendance open = todayRecords.stream().filter(a -> a.getCheckIn() != null && a.getCheckOut() == null).findFirst().orElse(null);
+        if (open == null && todayRecords.isEmpty()) {
+            open = attendanceRepository.findByEmployeeIdAndDateOrderByIdDesc(employeeId, today.minusDays(1)).stream()
+                    .filter(a -> a.getCheckIn() != null && a.getCheckOut() == null).findFirst().orElse(null);
+        }
+        return open == null
+                ? PunchStatusDTO.builder().checkedIn(false).build()
+                : PunchStatusDTO.builder().checkedIn(true).since(open.getCheckIn()).shiftDate(open.getDate()).build();
+    }
+
+    private Long lookupEmployeeIdWithoutCreating(Long providedId) {
+        User currentUser = getCurrentUser();
+        Long mine = null;
+        if (currentUser != null) {
+            mine = (currentUser.getEmployeeId() != null && currentUser.getEmployeeId() > 0) ? currentUser.getEmployeeId()
+                    : employeeRepository.findByNameIgnoreCase(currentUser.getUsername()).map(Employee::getId).orElse(null);
+        }
+        if (currentUser != null && currentUser.getRole() == User.Role.EMPLOYEE) {
+            if (providedId != null && providedId > 0 && !providedId.equals(mine)) {
+                throw new AccessDeniedException("Employees may not look at other employees' attendance.");
+            }
+            return mine;
+        }
+        return (providedId != null && providedId > 0) ? providedId : mine;
     }
 
     @Transactional

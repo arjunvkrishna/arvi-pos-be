@@ -119,135 +119,153 @@ public class RecipeService {
     }
 
     /**
-     * Deducts recipe ingredients when order is dispatched to kitchen / KOT printed.
-     * Guaranteed idempotent: skips if SALE_CONSUMPTION already recorded for the bill_item_id.
+     * Stock follows the SETTLED bill, not the kitchen ticket. This brings the stock taken for one bill in line with what the bill
+     * holds now: on payment it takes what the recipes need, and when a paid bill is edited (Bill Log) it takes or returns only the
+     * difference. Running it twice changes nothing. Items issued by hand (auto-deduct off) are left alone, and a recipe whose unit
+     * cannot be converted is skipped with a warning so a payment is never held up by a stock mapping.
      */
     @Transactional
-    public void deductIngredientsForOrder(Bill bill) {
-        if (bill == null || bill.getItems() == null) return;
+    public void settleBill(Bill bill) {
+        if (bill == null || bill.getId() == null) return;
+        applyDifference(bill, desiredConsumption(bill), "settled");
+    }
 
-        for (BillItem item : bill.getItems()) {
-            if (item.getMenuItemId() == null || item.getQuantity() == null || item.getQuantity() <= 0) continue;
+    /** Puts back everything taken for this bill (cancelled, or voided with the food not made). Safe to call again. */
+    @Transactional
+    public void restoreBill(Bill bill, String reason) {
+        if (bill == null || bill.getId() == null) return;
+        applyDifference(bill, java.util.Collections.emptyMap(), reason == null || reason.isBlank() ? "cancelled" : reason);
+    }
 
-            List<Recipe> recipes = recipeRepository.findByMenuItemIdAndActiveTrue(item.getMenuItemId());
-            if (recipes.isEmpty()) continue;
-
-            for (Recipe recipe : recipes) {
-                InventoryItem invItem = inventoryItemRepository.findById(recipe.getInventoryItemId()).orElse(null);
-                if (invItem == null) continue;
-
-                // Check idempotency: have we already recorded SALE_CONSUMPTION for this bill item and recipe?
-                List<InventoryTransaction> existingTxns = inventoryTransactionRepository.findByItemIdOrderByCreatedAtDesc(invItem.getId());
-                boolean alreadyDeducted = existingTxns.stream()
-                        .anyMatch(t -> "SALE_CONSUMPTION".equals(t.getTransactionType())
-                                && item.getId() != null && item.getId().equals(t.getBillItemId())
-                                && recipe.getId().equals(t.getRecipeId()));
-                if (alreadyDeducted) {
-                    continue;
-                }
-
-                BigDecimal totalRecipeQty = recipe.getQuantityPerServing().multiply(BigDecimal.valueOf(item.getQuantity()));
-                BigDecimal convertedQty = convertQuantity(totalRecipeQty, recipe.getUnit(), invItem.getUnit());
-                double qtyToDeduct = convertedQty.doubleValue();
-
-                double prevStock = invItem.getQuantity() != null ? invItem.getQuantity() : 0.0;
-                double newStock = prevStock - qtyToDeduct;
-                invItem.setQuantity(newStock);
-                double unitVol = invItem.getUnitVolume() != null ? invItem.getUnitVolume() : 1.0;
-                invItem.setTotalVolume(newStock * unitVol);
-                invItem.setLastUpdated(LocalDateTime.now());
-                inventoryItemRepository.save(invItem);
-
-                InventoryTransaction txn = InventoryTransaction.builder()
-                        .itemId(invItem.getId())
-                        .transactionType("SALE_CONSUMPTION")
-                        .quantity(qtyToDeduct)
-                        .previousStock(prevStock)
-                        .newStock(newStock)
-                        .unitVolume(unitVol)
-                        .volumeUnit(invItem.getVolumeUnit())
-                        .totalVolume(qtyToDeduct * unitVol)
-                        .costPerVolume(invItem.getCostPerVolume())
-                        .billId(bill.getId())
-                        .billItemId(item.getId())
-                        .recipeId(recipe.getId())
-                        .unit(invItem.getUnit())
-                        .unitPrice(invItem.getCostPerUnit())
-                        .notes(String.format("Auto recipe deduction | Order #%s: %s x%d (Deducted %.3f %s)",
-                                bill.getBillNumber(), item.getItemName(), item.getQuantity(), qtyToDeduct, invItem.getUnit()))
-                        .createdAt(LocalDateTime.now())
-                        .build();
-                inventoryTransactionRepository.save(txn);
+    /**
+     * The food was made and thrown away (void before payment): the stock it needed is taken now and the loss is recorded as waste,
+     * once per bill. Stock a bill printed under the old rule already took is not taken twice.
+     */
+    @Transactional
+    public void writeOffBill(Bill bill, String reason) {
+        if (bill == null || bill.getId() == null) return;
+        List<InventoryTransaction> txns = inventoryTransactionRepository.findByBillId(bill.getId());
+        if (txns.stream().anyMatch(t -> "WASTE".equals(t.getTransactionType()))) return;
+        java.util.Map<Long, Double> recorded = recordedConsumption(txns);
+        java.util.Map<Long, Double> needed = new java.util.LinkedHashMap<>(desiredConsumption(bill));
+        recorded.forEach((id, qty) -> needed.merge(id, qty, Math::max));
+        for (java.util.Map.Entry<Long, Double> e : needed.entrySet()) {
+            double wasted = StockUnits.round3(e.getValue());
+            if (wasted <= 0.0005) continue;
+            InventoryItem inv = inventoryItemRepository.findById(e.getKey()).orElse(null);
+            if (inv == null) continue;
+            double takeNow = Math.max(0.0, StockUnits.round3(wasted - recorded.getOrDefault(e.getKey(), 0.0)));
+            double prev = inv.getQuantity() != null ? inv.getQuantity() : 0.0;
+            double next = StockUnits.round3(prev - takeNow);
+            if (takeNow > 0) {
+                inv.setQuantity(next);
+                double unitVol = inv.getUnitVolume() != null ? inv.getUnitVolume() : 1.0;
+                inv.setTotalVolume(next * unitVol);
+                inv.setLastUpdated(LocalDateTime.now());
+                inventoryItemRepository.save(inv);
             }
+            inventoryTransactionRepository.save(InventoryTransaction.builder()
+                    .itemId(inv.getId()).transactionType("WASTE").quantity(wasted)
+                    .previousStock(prev).newStock(next)
+                    .billId(bill.getId()).unit(inv.getUnit()).unitPrice(inv.getCostPerUnit()).reasonType("SPOILED")
+                    .notes(String.format("Food made and discarded for voided bill #%s: %s", bill.getBillNumber(), reason))
+                    .createdAt(LocalDateTime.now()).build());
+        }
+    }
+
+    /** Stock units the recipes need for the bill as it is now, per inventory item. */
+    java.util.Map<Long, Double> desiredConsumption(Bill bill) {
+        java.util.Map<Long, Double> out = new java.util.LinkedHashMap<>();
+        if (bill.getItems() == null) return out;
+        for (BillItem item : bill.getItems()) {
+            Long dishId = menuItemIdOf(item);
+            if (dishId == null || item.getQuantity() == null || item.getQuantity() <= 0) continue;
+            for (Recipe recipe : recipeRepository.findByMenuItemIdAndActiveTrue(dishId)) {
+                InventoryItem inv = inventoryItemRepository.findById(recipe.getInventoryItemId()).orElse(null);
+                if (inv == null) continue;
+                // Items issued by hand (milk, oil...) are not reduced by sales: the recipe stays for costing only
+                if (Boolean.FALSE.equals(inv.getAutoDeduct())) continue;
+                try {
+                    BigDecimal qty = convertQuantity(recipe.getQuantityPerServing().multiply(BigDecimal.valueOf(item.getQuantity())), recipe.getUnit(), inv.getUnit());
+                    out.merge(inv.getId(), qty.doubleValue(), Double::sum);
+                } catch (IllegalArgumentException e) {
+                    log.warn("Recipe {} skipped for bill {}: {}", recipe.getId(), bill.getBillNumber(), e.getMessage());
+                }
+            }
+        }
+        return out;
+    }
+
+    /** The dish of a bill line. A line without an id (an old bill) is matched by its name when exactly one dish has that name. */
+    private Long menuItemIdOf(BillItem item) {
+        if (item.getMenuItemId() != null) return item.getMenuItemId();
+        if (item.getItemName() == null || item.getItemName().isBlank()) return null;
+        List<MenuItem> same = menuItemRepository.findByNameIgnoreCase(item.getItemName().trim());
+        return same.size() == 1 ? same.get(0).getId() : null;
+    }
+
+    /** Stock units already taken for a bill, per inventory item: sales minus what was put back. */
+    private java.util.Map<Long, Double> recordedConsumption(List<InventoryTransaction> txns) {
+        java.util.Map<Long, Double> out = new java.util.LinkedHashMap<>();
+        for (InventoryTransaction t : txns) {
+            if (t.getItemId() == null || t.getQuantity() == null) continue;
+            if ("SALE_CONSUMPTION".equals(t.getTransactionType())) out.merge(t.getItemId(), t.getQuantity(), Double::sum);
+            else if ("REFUND_REVERSAL".equals(t.getTransactionType())) out.merge(t.getItemId(), -t.getQuantity(), Double::sum);
+        }
+        return out;
+    }
+
+    private void applyDifference(Bill bill, java.util.Map<Long, Double> desired, String why) {
+        java.util.Map<Long, Double> recorded = recordedConsumption(inventoryTransactionRepository.findByBillId(bill.getId()));
+        java.util.Set<Long> ids = new java.util.LinkedHashSet<>(desired.keySet());
+        ids.addAll(recorded.keySet());
+        for (Long invId : ids) {
+            double delta = StockUnits.round3(desired.getOrDefault(invId, 0.0) - recorded.getOrDefault(invId, 0.0));
+            if (Math.abs(delta) < 0.0005) continue;
+            InventoryItem inv = inventoryItemRepository.findById(invId).orElse(null);
+            if (inv == null) continue;
+            double prev = inv.getQuantity() != null ? inv.getQuantity() : 0.0;
+            double next = StockUnits.round3(prev - delta);
+            inv.setQuantity(next);
+            double unitVol = inv.getUnitVolume() != null ? inv.getUnitVolume() : 1.0;
+            inv.setTotalVolume(next * unitVol);
+            inv.setLastUpdated(LocalDateTime.now());
+            inventoryItemRepository.save(inv);
+            boolean taken = delta > 0;
+            String dishes = bill.getItems() == null ? "" : bill.getItems().stream().filter(i -> i.getQuantity() != null && i.getQuantity() > 0)
+                    .map(i -> i.getItemName() + " x" + i.getQuantity()).collect(Collectors.joining(", "));
+            inventoryTransactionRepository.save(InventoryTransaction.builder()
+                    .itemId(inv.getId()).transactionType(taken ? "SALE_CONSUMPTION" : "REFUND_REVERSAL").quantity(Math.abs(delta))
+                    .previousStock(prev).newStock(next).unitVolume(unitVol).volumeUnit(inv.getVolumeUnit())
+                    .totalVolume(Math.abs(delta) * unitVol).costPerVolume(inv.getCostPerVolume())
+                    .billId(bill.getId()).unit(inv.getUnit()).unitPrice(inv.getCostPerUnit())
+                    .notes(String.format("%s | Bill #%s (%s): %s", taken ? "Stock used by sale" : "Stock returned", bill.getBillNumber(), why, dishes))
+                    .createdAt(LocalDateTime.now()).build());
         }
     }
 
     /**
-     * Handles ingredient stock adjustment on bill cancellation / void:
-     * - If NOT prepared (cancelled before kitchen prep/print): restores stock via REFUND_REVERSAL.
-     * - If prepared (cancelled after kitchen printed/prepped): records WASTE; usable stock is NOT restored.
+     * Re-attributes the stock consumption already recorded for one bill to another. Used when two orders are merged so that a
+     * later cancellation/void of the surviving bill reverses (or wastes) the stock of the items that were moved into it.
+     */
+    @Transactional
+    public void transferConsumption(Long fromBillId, Long toBillId) {
+        if (fromBillId == null || toBillId == null || fromBillId.equals(toBillId)) return;
+        List<InventoryTransaction> txns = inventoryTransactionRepository.findByBillId(fromBillId);
+        for (InventoryTransaction t : txns) {
+            t.setBillId(toBillId);
+        }
+        inventoryTransactionRepository.saveAll(txns);
+    }
+
+    /**
+     * Cancel / void happen before payment (a paid bill goes through a refund). If the food was NOT made nothing is taken (older bills
+     * printed under the previous rule are put back from their records); if it was made and thrown away its stock is taken now and
+     * the loss is recorded as waste.
      */
     @Transactional
     public void handleOrderCancellation(Bill bill, boolean prepared, String reason) {
-        if (bill == null || bill.getId() == null) return;
-
-        List<InventoryTransaction> allTxns = inventoryTransactionRepository.findAll();
-        List<InventoryTransaction> consumptionTxns = allTxns.stream()
-                .filter(t -> "SALE_CONSUMPTION".equals(t.getTransactionType()) && bill.getId().equals(t.getBillId()))
-                .collect(Collectors.toList());
-
-        for (InventoryTransaction origTxn : consumptionTxns) {
-            InventoryItem invItem = inventoryItemRepository.findById(origTxn.getItemId()).orElse(null);
-            if (invItem == null) continue;
-
-            if (!prepared) {
-                // Restore usable stock
-                double prevStock = invItem.getQuantity() != null ? invItem.getQuantity() : 0.0;
-                double newStock = prevStock + origTxn.getQuantity();
-                invItem.setQuantity(newStock);
-                double unitVol = invItem.getUnitVolume() != null ? invItem.getUnitVolume() : 1.0;
-                invItem.setTotalVolume(newStock * unitVol);
-                invItem.setLastUpdated(LocalDateTime.now());
-                inventoryItemRepository.save(invItem);
-
-                InventoryTransaction reverseTxn = InventoryTransaction.builder()
-                        .itemId(invItem.getId())
-                        .transactionType("REFUND_REVERSAL")
-                        .quantity(origTxn.getQuantity())
-                        .previousStock(prevStock)
-                        .newStock(newStock)
-                        .unitVolume(unitVol)
-                        .volumeUnit(invItem.getVolumeUnit())
-                        .totalVolume(origTxn.getQuantity() * unitVol)
-                        .costPerVolume(invItem.getCostPerVolume())
-                        .billId(bill.getId())
-                        .billItemId(origTxn.getBillItemId())
-                        .recipeId(origTxn.getRecipeId())
-                        .unit(invItem.getUnit())
-                        .unitPrice(invItem.getCostPerUnit())
-                        .notes(String.format("Restored stock for cancelled order #%s: %s", bill.getBillNumber(), reason))
-                        .createdAt(LocalDateTime.now())
-                        .build();
-                inventoryTransactionRepository.save(reverseTxn);
-            } else {
-                // Food was prepped and discarded: record waste, do not return to inventory
-                InventoryTransaction wasteTxn = InventoryTransaction.builder()
-                        .itemId(invItem.getId())
-                        .transactionType("WASTE")
-                        .quantity(origTxn.getQuantity())
-                        .previousStock(invItem.getQuantity())
-                        .newStock(invItem.getQuantity())
-                        .billId(bill.getId())
-                        .billItemId(origTxn.getBillItemId())
-                        .recipeId(origTxn.getRecipeId())
-                        .unit(invItem.getUnit())
-                        .unitPrice(invItem.getCostPerUnit())
-                        .notes(String.format("Food prepped & discarded for voided order #%s: %s", bill.getBillNumber(), reason))
-                        .createdAt(LocalDateTime.now())
-                        .build();
-                inventoryTransactionRepository.save(wasteTxn);
-            }
-        }
+        if (prepared) writeOffBill(bill, reason); else restoreBill(bill, reason);
     }
 
     public static BigDecimal convertQuantity(BigDecimal qty, String fromUnit, String toUnit) {
@@ -310,6 +328,7 @@ public class RecipeService {
                 .inventoryItemName(invItem != null ? invItem.getName() : null)
                 .inventoryItemUnit(invItem != null ? invItem.getUnit() : null)
                 .inventoryCostPerUnit(invItem != null ? invItem.getCostPerUnit() : BigDecimal.ZERO)
+                .inventoryAutoDeduct(invItem == null || !Boolean.FALSE.equals(invItem.getAutoDeduct()))
                 .quantityPerServing(r.getQuantityPerServing())
                 .unit(r.getUnit())
                 .active(r.getActive())

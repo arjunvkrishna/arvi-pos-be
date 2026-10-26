@@ -26,6 +26,12 @@ public class UserDTO {
     private Long outletId;
     private String outletName;
     private Long tenantId;
+    private Boolean canPrintBill;
+    private Boolean canManageMenu;
+    private Boolean canManageSettings;
     private Boolean mustChangePassword;
     private LocalDateTime createdAt;
+    /** True while the account is locked after repeated failed logins. */
+    private Boolean locked;
+    private LocalDateTime lockedUntil;
 }

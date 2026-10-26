@@ -21,7 +21,7 @@ public class GstSettingController {
     }
 
     @PutMapping("/config")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @PreAuthorize("hasAuthority('PERM_MANAGE_SETTINGS')")
     public ResponseEntity<GstSettingDTO> updateGstConfig(@RequestBody GstSettingDTO dto) {
         return ResponseEntity.ok(gstSettingService.updateSettings(dto));
     }

@@ -6,4 +6,5 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 public interface PrinterSettingRepository extends JpaRepository<PrinterSetting, Long> {
+    java.util.Optional<PrinterSetting> findFirstByOrderByIdAsc();
 }

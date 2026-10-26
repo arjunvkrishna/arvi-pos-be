@@ -14,7 +14,8 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Entity
 @Table(name = "system_notifications")
-public class SystemNotification {
+@org.hibernate.annotations.Filter(name = "outletScope", condition = "(outlet_id = :outletId OR outlet_id IS NULL)")
+public class SystemNotification implements com.neram.pos.access.OutletScoped {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -46,11 +47,17 @@ public class SystemNotification {
     public enum NotificationType {
         LOW_STOCK,
         LEAVE_REQUEST,
-        GENERAL
+        GENERAL,
+        PRINTER_ALERT,       // printer / print bridge offline or back online
+        PRINT_JOB_FAILED,    // a print job ended FAILED / NEEDS_REVIEW
+        SECURITY_ALERT       // e.g. an account was locked after repeated failed logins
     }
 
     public enum Status {
         UNREAD,
         READ
     }
+
+    @Column(name = "outlet_id")
+    private Long outletId;
 }

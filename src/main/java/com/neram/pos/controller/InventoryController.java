@@ -6,6 +6,8 @@ import com.neram.pos.dto.InventoryTransactionDTO;
 import com.neram.pos.dto.StockDecreaseRequestDTO;
 import com.neram.pos.service.InventoryService;
 import lombok.RequiredArgsConstructor;
+import com.neram.pos.util.PagedResponse;
+import org.springframework.data.domain.Pageable;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -22,17 +24,55 @@ import java.util.Map;
 public class InventoryController {
 
     private final InventoryService inventoryService;
+    private final com.neram.pos.service.StockOpsService stockOps;
 
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER') or hasAuthority('PERM_MANAGE_INVENTORY')")
-    public ResponseEntity<List<InventoryItemDTO>> getAllItems(@RequestParam(required = false) String category) {
-        return ResponseEntity.ok(inventoryService.getAllItems(category));
+    public ResponseEntity<List<InventoryItemDTO>> getAllItems(
+            @RequestParam(required = false) String category,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false, defaultValue = "false") boolean lowOnly,
+            Pageable pageable) {
+        return PagedResponse.of(inventoryService.searchItems(category, q, lowOnly, pageable));
     }
 
     @GetMapping("/low-stock")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER') or hasAuthority('PERM_MANAGE_INVENTORY')")
     public ResponseEntity<List<InventoryItemDTO>> getLowStockItems() {
         return ResponseEntity.ok(inventoryService.getLowStockItems());
+    }
+
+    /** Stock that is expired or about to expire (?all=true lists every batch with an expiry), earliest first. */
+    @GetMapping("/expiry")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER') or hasAuthority('PERM_MANAGE_INVENTORY')")
+    public ResponseEntity<List<com.neram.pos.dto.ExpiryBatchDTO>> getExpiry(@RequestParam(defaultValue = "false") boolean all) {
+        return ResponseEntity.ok(inventoryService.getExpiryBatches(all));
+    }
+
+    /** What to buy: items that are out, below their minimum or will run out within a week at the recent pace, with a suggested quantity and supplier. */
+    @GetMapping("/reorder")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER') or hasAuthority('PERM_MANAGE_INVENTORY')")
+    public ResponseEntity<com.neram.pos.dto.StockOpsDTO.Reorder> getReorder() {
+        return ResponseEntity.ok(stockOps.reorder());
+    }
+
+    /** Ingredient prices that moved between the last two purchases, and dishes whose margin is under the floor. */
+    @GetMapping("/cost-alerts")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    public ResponseEntity<com.neram.pos.dto.StockOpsDTO.CostAlerts> getCostAlerts() {
+        return ResponseEntity.ok(stockOps.costAlerts());
+    }
+
+    @GetMapping("/cost-alerts/settings")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    public ResponseEntity<com.neram.pos.dto.StockOpsDTO.CostAlertSettings> getCostAlertSettings() {
+        return ResponseEntity.ok(stockOps.getSettings());
+    }
+
+    @PutMapping("/cost-alerts/settings")
+    @PreAuthorize("hasAuthority('PERM_MANAGE_SETTINGS')")
+    public ResponseEntity<com.neram.pos.dto.StockOpsDTO.CostAlertSettings> saveCostAlertSettings(@RequestBody com.neram.pos.dto.StockOpsDTO.CostAlertSettings body, Authentication auth) {
+        return ResponseEntity.ok(stockOps.saveSettings(body, auth != null ? auth.getName() : null));
     }
 
     @GetMapping("/{id}")
@@ -61,7 +101,7 @@ public class InventoryController {
             Authentication auth
     ) {
         String username = auth != null ? auth.getName() : null;
-        return ResponseEntity.ok(inventoryService.decreaseStock(id, request.getQuantity(), request.getReason(), username));
+        return ResponseEntity.ok(inventoryService.decreaseStock(id, request.getQuantity(), request.getReason(), username, Boolean.TRUE.equals(request.getInPacks()), request.getReasonType(), Boolean.TRUE.equals(request.getAllowNegative())));
     }
 
     @PatchMapping("/{id}/stock")
@@ -84,9 +124,10 @@ public class InventoryController {
             @RequestParam(required = false) Long userId,
             @RequestParam(required = false) Long itemId,
             @RequestParam(required = false) String transactionType,
-            @RequestParam(required = false) Long supplierId
+            @RequestParam(required = false) Long supplierId,
+            Pageable pageable
     ) {
-        return ResponseEntity.ok(inventoryService.getTransactions(startDate, endDate, userId, itemId, transactionType, supplierId));
+        return PagedResponse.of(inventoryService.getTransactions(startDate, endDate, userId, itemId, transactionType, supplierId, pageable));
     }
 
     @GetMapping("/{id}/transactions")

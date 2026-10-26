@@ -2,9 +2,14 @@ package com.neram.pos.controller;
 
 import com.neram.pos.dto.CreateUserRequestDTO;
 import com.neram.pos.dto.UserDTO;
+import com.neram.pos.service.AuditLogService;
+import com.neram.pos.service.LoginAttemptService;
 import com.neram.pos.service.UserService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import com.neram.pos.util.PagedResponse;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -20,6 +25,8 @@ import java.util.Map;
 public class UserController {
 
     private final UserService userService;
+    private final LoginAttemptService loginAttemptService;
+    private final AuditLogService auditLogService;
 
     /**
      * GET /api/users/me
@@ -60,8 +67,8 @@ public class UserController {
             return ResponseEntity.badRequest().body(Map.of("message", "newPassword is required"));
         }
         try {
-            userService.changeOwnPassword(username, currentPassword, newPassword);
-            return ResponseEntity.ok(Map.of("message", "Password changed successfully"));
+            String refreshToken = userService.changeOwnPassword(username, currentPassword, newPassword);
+            return ResponseEntity.ok(Map.of("message", "Password changed successfully", "refreshToken", refreshToken));
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
         }
@@ -73,17 +80,46 @@ public class UserController {
      * Outlet Manager: staff in their assigned outlet only
      */
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'CAFE_ADMIN', 'GENERAL_MANAGER', 'MANAGER')")
-    public ResponseEntity<List<UserDTO>> getUsers(Authentication auth) {
+    @PreAuthorize("hasAuthority('PERM_MANAGE_STAFF')")
+    public ResponseEntity<List<UserDTO>> getUsers(Authentication auth, Pageable pageable) {
         String callerRole = getRole(auth);
-        return ResponseEntity.ok(userService.getUsers(callerRole));
+        Page<UserDTO> page = userService.getUsers(callerRole, pageable);
+        List<UserDTO> users = page.getContent();
+        // Mark accounts that are currently locked after repeated failed logins
+        java.util.Map<String, java.time.LocalDateTime> locked = loginAttemptService.lockedUntil(
+                users.stream().map(UserDTO::getUsername).toList());
+        users.forEach(u -> {
+            java.time.LocalDateTime until = locked.get(LoginAttemptService.keyFor(u.getUsername()));
+            u.setLocked(until != null);
+            u.setLockedUntil(until);
+        });
+        return PagedResponse.of(page);
+    }
+
+    /**
+     * POST /api/users/{id}/unlock
+     * Lifts a login lockout. Admin: any account. Manager: Employee accounts only (same rule as deactivate).
+     */
+    @PostMapping("/{id}/unlock")
+    @PreAuthorize("hasAuthority('PERM_MANAGE_STAFF')")
+    public ResponseEntity<?> unlock(@PathVariable Long id, Authentication auth) {
+        String callerRole = getRole(auth);
+        try {
+            UserDTO target = userService.getUserById(id, callerRole);
+            userService.assertCanManageUser(id, callerRole);
+            loginAttemptService.unlock(target.getUsername());
+            auditLogService.log("UNLOCK_ACCOUNT", "USER", id, null, "Login lock removed for " + target.getUsername());
+            return ResponseEntity.ok(Map.of("message", "Account unlocked"));
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        }
     }
 
     /**
      * GET /api/users/{id}
      */
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'CAFE_ADMIN', 'GENERAL_MANAGER', 'MANAGER')")
+    @PreAuthorize("hasAuthority('PERM_MANAGE_STAFF')")
     public ResponseEntity<UserDTO> getUserById(@PathVariable Long id, Authentication auth) {
         String callerRole = getRole(auth);
         return ResponseEntity.ok(userService.getUserById(id, callerRole));
@@ -95,7 +131,7 @@ public class UserController {
      * Manager: can only create EMPLOYEE role
      */
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'CAFE_ADMIN', 'GENERAL_MANAGER', 'MANAGER')")
+    @PreAuthorize("hasAuthority('PERM_MANAGE_STAFF')")
     public ResponseEntity<?> createUser(@RequestBody CreateUserRequestDTO dto, Authentication auth) {
         String callerRole = getRole(auth);
         try {
@@ -110,7 +146,7 @@ public class UserController {
      * Body: { "newPassword": "..." }
      */
     @PatchMapping("/{id}/reset-password")
-    @PreAuthorize("hasAnyRole('ADMIN', 'CAFE_ADMIN', 'GENERAL_MANAGER', 'MANAGER')")
+    @PreAuthorize("hasAuthority('PERM_MANAGE_STAFF')")
     public ResponseEntity<?> resetPassword(@PathVariable Long id, @RequestBody Map<String, String> body, Authentication auth) {
         String callerRole = getRole(auth);
         String newPassword = body.get("newPassword");
@@ -129,7 +165,7 @@ public class UserController {
      * Toggle user active/inactive
      */
     @PatchMapping("/{id}/toggle-active")
-    @PreAuthorize("hasAnyRole('ADMIN', 'CAFE_ADMIN', 'GENERAL_MANAGER', 'MANAGER')")
+    @PreAuthorize("hasAuthority('PERM_MANAGE_STAFF')")
     public ResponseEntity<?> toggleActive(@PathVariable Long id, Authentication auth) {
         String callerRole = getRole(auth);
         try {
@@ -143,8 +179,8 @@ public class UserController {
      * PATCH /api/users/{id}/permissions
      * Body: { "canBill": true, "canTakeOrders": true, "canManageInventory": false, "canManageExpenses": false, "canViewReports": false }
      */
-    @PatchMapping("/{id}/permissions")
-    @PreAuthorize("hasAnyRole('ADMIN', 'CAFE_ADMIN', 'GENERAL_MANAGER', 'MANAGER')")
+    @RequestMapping(value = "/{id}/permissions", method = {RequestMethod.PUT, RequestMethod.PATCH})
+    @PreAuthorize("hasAuthority('PERM_MANAGE_STAFF')")
     public ResponseEntity<?> updatePermissions(@PathVariable Long id,
                                                 @RequestBody com.neram.pos.dto.UpdateUserPermissionsRequestDTO body,
                                                 Authentication auth) {

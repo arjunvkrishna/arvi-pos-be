@@ -27,6 +27,14 @@ public class SupplierInvoiceItemDTO {
     private String volumeUnit;
     private Double totalVolume;
     private BigDecimal costPerVolume;
+    /** "PACK" when quantity/unitPrice are per pack; otherwise per stock unit. */
+    private String purchaseMode;
+    private String packName;
+    private Double packSize;
+    /** Stock units added by this line (read-only). */
+    private Double stockQuantity;
+    /** optional expiry date of the goods on this line */
+    private java.time.LocalDate expiryDate;
     private Double gstRate;
     private BigDecimal gstAmount;
     private LocalDateTime createdAt;

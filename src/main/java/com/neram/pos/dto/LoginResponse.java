@@ -21,6 +21,9 @@ public class LoginResponse {
     private Boolean canManageInventory;
     private Boolean canManageExpenses;
     private Boolean canViewReports;
+    private Boolean canPrintBill;
+    private Boolean canManageMenu;
+    private Boolean canManageSettings;
     private Boolean mustChangePassword;
     private Long tenantId;
     private String tenantName;

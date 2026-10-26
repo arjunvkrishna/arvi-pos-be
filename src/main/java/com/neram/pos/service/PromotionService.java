@@ -37,6 +37,11 @@ public class PromotionService {
                 .collect(Collectors.toList());
     }
 
+    /** One page of promotions, newest first. */
+    public org.springframework.data.domain.Page<PromotionResponseDTO> getAllPromotions(org.springframework.data.domain.Pageable pageable) {
+        return promotionRepository.findAllByOrderByCreatedAtDesc(pageable).map(this::toResponseDTO);
+    }
+
     public PromotionResponseDTO getPromotionById(Long id) {
         Promotion promo = promotionRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Promotion not found with id: " + id));
@@ -45,7 +50,8 @@ public class PromotionService {
 
     public Optional<Promotion> getActivePromotion() {
         LocalDateTime nowKolkata = LocalDateTime.now(ZONE_KOLKATA);
-        List<Promotion> activePromos = promotionRepository.findActivePromotionsAt(nowKolkata);
+        List<Promotion> activePromos = promotionRepository.findActivePromotionsAt(nowKolkata).stream()
+                .filter(p -> PromotionSchedule.isActiveAt(p, nowKolkata)).collect(Collectors.toList());
         if (activePromos.isEmpty()) {
             return Optional.empty();
         }
@@ -58,7 +64,7 @@ public class PromotionService {
 
         boolean willBeActive = dto.getIsActive() == null || Boolean.TRUE.equals(dto.getIsActive());
         if (willBeActive) {
-            checkNoActiveOverlap(null, dto.getStartDateTime(), dto.getEndDateTime());
+            checkNoActiveOverlap(null, candidate(dto));
         }
 
         Promotion promo = Promotion.builder()
@@ -67,6 +73,10 @@ public class PromotionService {
                 .startDateTime(dto.getStartDateTime())
                 .endDateTime(dto.getEndDateTime())
                 .isActive(willBeActive)
+                .recurring(Boolean.TRUE.equals(dto.getRecurring()))
+                .daysOfWeek(Boolean.TRUE.equals(dto.getRecurring()) ? PromotionSchedule.joinDays(dto.getDaysOfWeek()) : null)
+                .dailyStart(Boolean.TRUE.equals(dto.getRecurring()) ? dto.getDailyStart() : null)
+                .dailyEnd(Boolean.TRUE.equals(dto.getRecurring()) ? dto.getDailyEnd() : null)
                 .description(dto.getDescription() != null ? dto.getDescription().trim() : null)
                 .createdBy(userId)
                 .createdAt(LocalDateTime.now())
@@ -91,7 +101,7 @@ public class PromotionService {
 
         boolean willBeActive = dto.getIsActive() != null ? dto.getIsActive() : Boolean.TRUE.equals(promo.getIsActive());
         if (willBeActive) {
-            checkNoActiveOverlap(id, dto.getStartDateTime(), dto.getEndDateTime());
+            checkNoActiveOverlap(id, candidate(dto));
         }
 
         String oldDesc = String.format("'%s' (%.1f%%, Active: %s)", promo.getName(), promo.getDiscountPercentage(), promo.getIsActive());
@@ -101,6 +111,10 @@ public class PromotionService {
         promo.setStartDateTime(dto.getStartDateTime());
         promo.setEndDateTime(dto.getEndDateTime());
         promo.setIsActive(willBeActive);
+        promo.setRecurring(Boolean.TRUE.equals(dto.getRecurring()));
+        promo.setDaysOfWeek(Boolean.TRUE.equals(dto.getRecurring()) ? PromotionSchedule.joinDays(dto.getDaysOfWeek()) : null);
+        promo.setDailyStart(Boolean.TRUE.equals(dto.getRecurring()) ? dto.getDailyStart() : null);
+        promo.setDailyEnd(Boolean.TRUE.equals(dto.getRecurring()) ? dto.getDailyEnd() : null);
         if (dto.getDescription() != null) {
             promo.setDescription(dto.getDescription().trim());
         }
@@ -122,7 +136,7 @@ public class PromotionService {
 
         boolean newActive = !Boolean.TRUE.equals(promo.getIsActive());
         if (newActive) {
-            checkNoActiveOverlap(id, promo.getStartDateTime(), promo.getEndDateTime());
+            checkNoActiveOverlap(id, promo);
         }
 
         promo.setIsActive(newActive);
@@ -165,22 +179,35 @@ public class PromotionService {
         if (!dto.getEndDateTime().isAfter(dto.getStartDateTime())) {
             throw new IllegalArgumentException("Promotion end date/time must be strictly after the start date/time.");
         }
+        if (Boolean.TRUE.equals(dto.getRecurring())) {
+            PromotionSchedule.validateRecurring(dto.getDaysOfWeek(), dto.getDailyStart(), dto.getDailyEnd());
+        }
     }
 
-    private void checkNoActiveOverlap(Long excludeId, LocalDateTime start, LocalDateTime end) {
-        List<Promotion> activePromos = promotionRepository.findByIsActiveTrue();
-        for (Promotion p : activePromos) {
+    /** The request as a promotion, so the overlap rules can compare it with the saved ones. */
+    private static Promotion candidate(PromotionRequestDTO dto) {
+        boolean rec = Boolean.TRUE.equals(dto.getRecurring());
+        return Promotion.builder().startDateTime(dto.getStartDateTime()).endDateTime(dto.getEndDateTime()).isActive(true).recurring(rec)
+                .daysOfWeek(rec ? PromotionSchedule.joinDays(dto.getDaysOfWeek()) : null).dailyStart(rec ? dto.getDailyStart() : null).dailyEnd(rec ? dto.getDailyEnd() : null).build();
+    }
+
+    private void checkNoActiveOverlap(Long excludeId, Promotion candidate) {
+        for (Promotion p : promotionRepository.findByIsActiveTrue()) {
             if (excludeId != null && p.getId().equals(excludeId)) {
                 continue;
             }
-            // Inclusive overlap check: !start.isAfter(p.getEndDateTime()) && !end.isBefore(p.getStartDateTime())
-            if (!start.isAfter(p.getEndDateTime()) && !end.isBefore(p.getStartDateTime())) {
+            if (PromotionSchedule.overlaps(candidate, p)) {
                 throw new IllegalArgumentException(String.format(
-                        "Promotion date range (%s to %s) overlaps with existing active promotion '%s' (%s to %s). Only one active promotion may be scheduled at a time.",
-                        start.format(FMT), end.format(FMT),
-                        p.getName(), p.getStartDateTime().format(FMT), p.getEndDateTime().format(FMT)));
+                        "This promotion (%s to %s%s) could apply at the same time as the active promotion '%s' (%s to %s%s). Only one active promotion may apply at a time.",
+                        candidate.getStartDateTime().format(FMT), candidate.getEndDateTime().format(FMT), suffix(candidate),
+                        p.getName(), p.getStartDateTime().format(FMT), p.getEndDateTime().format(FMT), suffix(p)));
             }
         }
+    }
+
+    private static String suffix(Promotion p) {
+        String t = PromotionSchedule.scheduleText(p);
+        return t == null ? "" : ", " + t;
     }
 
     public PromotionResponseDTO toResponseDTO(Promotion p) {
@@ -192,6 +219,8 @@ public class PromotionService {
             status = "SCHEDULED";
         } else if (nowKolkata.isAfter(p.getEndDateTime())) {
             status = "EXPIRED";
+        } else if (Boolean.TRUE.equals(p.getRecurring()) && !PromotionSchedule.isActiveAt(p, nowKolkata)) {
+            status = "SCHEDULED";   // inside its date range but outside the daily window
         } else {
             status = "ACTIVE";
         }
@@ -216,6 +245,11 @@ public class PromotionService {
                 .createdByName(createdByName)
                 .createdAt(p.getCreatedAt())
                 .updatedAt(p.getUpdatedAt())
+                .recurring(Boolean.TRUE.equals(p.getRecurring()))
+                .daysOfWeek(Boolean.TRUE.equals(p.getRecurring()) ? PromotionSchedule.parseDays(p.getDaysOfWeek()) : null)
+                .dailyStart(p.getDailyStart())
+                .dailyEnd(p.getDailyEnd())
+                .scheduleText(PromotionSchedule.scheduleText(p))
                 .build();
     }
 }

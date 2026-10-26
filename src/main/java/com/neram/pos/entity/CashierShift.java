@@ -15,7 +15,8 @@ import java.time.LocalDateTime;
 @Builder
 @Entity
 @Table(name = "cashier_shifts")
-public class CashierShift {
+@org.hibernate.annotations.Filter(name = "outletScope", condition = "(outlet_id = :outletId OR outlet_id IS NULL)")
+public class CashierShift implements com.neram.pos.tenancy.TenantScoped , com.neram.pos.access.OutletScoped {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -26,12 +27,10 @@ public class CashierShift {
     private String registerId = "REG-01";
 
     @Column(name = "tenant_id")
-    @Builder.Default
-    private Long tenantId = 1L;
+    private Long tenantId;
 
     @Column(name = "outlet_id")
-    @Builder.Default
-    private Long outletId = 1L;
+    private Long outletId;
 
     @Column(name = "cashier_id", nullable = false)
     private Long cashierId;
@@ -148,4 +147,5 @@ public class CashierShift {
     public enum ShiftStatus {
         OPEN, CLOSED
     }
+
 }

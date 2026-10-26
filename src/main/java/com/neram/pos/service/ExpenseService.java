@@ -157,6 +157,44 @@ public class ExpenseService {
         return list.stream().map(this::toTemplateDTO).collect(Collectors.toList());
     }
 
+    /**
+     * One page of expenses, newest first, narrowed by whichever filters are given (all optional): period, type, status and a
+     * text search over description, payee, receipt reference and notes.
+     */
+    public org.springframework.data.domain.Page<CafeExpenseDTO> searchExpenses(Integer month, Integer year, String type, String status,
+                                                                               String q, org.springframework.data.domain.Pageable pageable) {
+        CafeExpense.ExpenseType expenseType = (type != null && !type.isBlank() && !"ALL".equalsIgnoreCase(type))
+                ? CafeExpense.ExpenseType.valueOf(type.trim().toUpperCase()) : null;
+        String statusFilter = (status != null && !status.isBlank() && !"ALL".equalsIgnoreCase(status)) ? status.trim() : null;
+        String pattern = com.neram.pos.util.LikeSearch.pattern(q);
+
+        org.springframework.data.jpa.domain.Specification<CafeExpense> spec = (root, query, cb) -> {
+            List<jakarta.persistence.criteria.Predicate> p = new ArrayList<>();
+            if (month != null) p.add(cb.equal(root.get("month"), month));
+            if (year != null) p.add(cb.equal(root.get("year"), year));
+            if (expenseType != null) p.add(cb.equal(root.get("type"), expenseType));
+            if (statusFilter != null) p.add(cb.equal(root.get("status"), statusFilter));
+            if (pattern != null) {
+                p.add(cb.or(
+                        com.neram.pos.util.LikeSearch.contains(cb, root.get("description"), pattern),
+                        com.neram.pos.util.LikeSearch.contains(cb, root.get("vendorOrPayee"), pattern),
+                        com.neram.pos.util.LikeSearch.contains(cb, root.get("receiptRef"), pattern),
+                        com.neram.pos.util.LikeSearch.contains(cb, root.get("notes"), pattern)));
+            }
+            return cb.and(p.toArray(new jakarta.persistence.criteria.Predicate[0]));
+        };
+        org.springframework.data.domain.Sort newestFirst = org.springframework.data.domain.Sort.by(
+                org.springframework.data.domain.Sort.Order.desc("expenseDate"), org.springframework.data.domain.Sort.Order.desc("id"));
+        return expenseRepository.findAll(spec, com.neram.pos.util.PagedResponse.withSort(pageable, newestFirst)).map(this::toDTO);
+    }
+
+    /** One page of recurring templates, in due-day order. */
+    public org.springframework.data.domain.Page<ExpenseTemplateDTO> getAllTemplates(Boolean onlyActive, org.springframework.data.domain.Pageable pageable) {
+        return (Boolean.TRUE.equals(onlyActive)
+                ? templateRepository.findByIsActiveTrueOrderByDueDayAscIdAsc(pageable)
+                : templateRepository.findAllByOrderByDueDayAscIdAsc(pageable)).map(this::toTemplateDTO);
+    }
+
     public ExpenseTemplateDTO getTemplateById(Long id) {
         return templateRepository.findById(id)
                 .map(this::toTemplateDTO)

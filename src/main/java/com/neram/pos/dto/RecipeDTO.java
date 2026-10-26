@@ -34,6 +34,8 @@ public class RecipeDTO {
         private String inventoryItemName;
         private String inventoryItemUnit;
         private BigDecimal inventoryCostPerUnit;
+        /** false = the ingredient is issued by hand, so selling this dish does not reduce its stock */
+        private Boolean inventoryAutoDeduct;
         private BigDecimal quantityPerServing;
         private String unit;
         private Boolean active;

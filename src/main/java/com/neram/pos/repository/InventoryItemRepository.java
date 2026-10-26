@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.Optional;
 
 @Repository
-public interface InventoryItemRepository extends JpaRepository<InventoryItem, Long> {
+public interface InventoryItemRepository extends JpaRepository<InventoryItem, Long>, org.springframework.data.jpa.repository.JpaSpecificationExecutor<InventoryItem> {
     List<InventoryItem> findByActiveTrue();
 
     Optional<InventoryItem> findByNameIgnoreCaseAndActiveTrue(String name);

@@ -51,6 +51,22 @@ public class GlobalExceptionHandler {
         return handleAccessDenied(e, null);
     }
 
+    @ExceptionHandler(com.neram.pos.tenancy.TenantNotSelectedException.class)
+    public ResponseEntity<Map<String, Object>> handleTenantNotSelected(
+            com.neram.pos.tenancy.TenantNotSelectedException e, HttpServletRequest request) {
+        log.warn("No cafe selected [method={}, path={}, traceId={}]", getMethod(request), getPath(request), getTraceId());
+        return buildResponse(HttpStatus.BAD_REQUEST,
+                "This request needs a cafe. Log in with a cafe account or name the cafe in the request.", request, null);
+    }
+
+    @ExceptionHandler(com.neram.pos.tenancy.TenantUnavailableException.class)
+    public ResponseEntity<Map<String, Object>> handleTenantUnavailable(
+            com.neram.pos.tenancy.TenantUnavailableException e, HttpServletRequest request) {
+        log.warn("Cafe unavailable [method={}, path={}, traceId={}]: {}", getMethod(request), getPath(request),
+                getTraceId(), e.getMessage());
+        return buildResponse(HttpStatus.valueOf(e.getHttpStatus()), e.getMessage(), request, null);
+    }
+
     // ------------------------------------------------------------------------
     // 2. Resource Not Found (404)
     // ------------------------------------------------------------------------

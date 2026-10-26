@@ -12,5 +12,7 @@ public interface TelegramDeliveryLogRepository extends JpaRepository<TelegramDel
 
     List<TelegramDeliveryLog> findTop100ByOrderBySentAtDesc();
 
+    org.springframework.data.domain.Page<TelegramDeliveryLog> findAllByOrderBySentAtDescIdDesc(org.springframework.data.domain.Pageable pageable);
+
     List<TelegramDeliveryLog> findByReportDateOrderBySentAtDesc(LocalDate reportDate);
 }
