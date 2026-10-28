@@ -157,11 +157,9 @@ public class UserService {
                              targetRole == User.Role.GENERAL_MANAGER || 
                              targetRole == User.Role.MANAGER;
 
-        user.setCanBill(isElevated || Boolean.TRUE.equals(dto.getCanBill()) || targetRole == User.Role.CASHIER);
         user.setCanTakeOrders(isElevated || Boolean.TRUE.equals(dto.getCanTakeOrders()) || targetRole == User.Role.CAPTAIN || targetRole == User.Role.CASHIER);
         user.setCanManageInventory(isElevated || Boolean.TRUE.equals(dto.getCanManageInventory()));
-        user.setCanManageExpenses(isElevated || Boolean.TRUE.equals(dto.getCanManageExpenses()));
-        user.setCanViewReports(isElevated || Boolean.TRUE.equals(dto.getCanViewReports()));
+        user.setCanCancelOrder(isElevated || Boolean.TRUE.equals(dto.getCanCancelOrder()));
         user.setCanPrintBill(!isElevated && Boolean.TRUE.equals(dto.getCanPrintBill()));
         // Menu/settings rights are delegated by role level: owners and main managers always have them, so the toggle
         // only matters (and may be set at creation) for branch managers and staff.
@@ -305,11 +303,9 @@ public class UserService {
             throw new RuntimeException("Access denied: only the owner or main manager can move staff between branches");
         }
 
-        if (dto.getCanBill() != null) user.setCanBill(dto.getCanBill());
         if (dto.getCanTakeOrders() != null) user.setCanTakeOrders(dto.getCanTakeOrders());
         if (dto.getCanManageInventory() != null) user.setCanManageInventory(dto.getCanManageInventory());
-        if (dto.getCanManageExpenses() != null) user.setCanManageExpenses(dto.getCanManageExpenses());
-        if (dto.getCanViewReports() != null) user.setCanViewReports(dto.getCanViewReports());
+        if (dto.getCanCancelOrder() != null) user.setCanCancelOrder(dto.getCanCancelOrder());
         if (dto.getCanPrintBill() != null) user.setCanPrintBill(dto.getCanPrintBill());
         if (dto.getCanManageMenu() != null) user.setCanManageMenu(dto.getCanManageMenu());
         if (dto.getCanManageSettings() != null) user.setCanManageSettings(dto.getCanManageSettings());
@@ -319,9 +315,9 @@ public class UserService {
         User saved = userRepository.save(user);
 
         auditLogService.log("UPDATE", "USER", id, null,
-                "Updated permissions for " + user.getUsername() + ": canBill=" + user.getCanBill() +
-                ", canTakeOrders=" + user.getCanTakeOrders() + ", canManageInventory=" + user.getCanManageInventory() +
-                ", canManageExpenses=" + user.getCanManageExpenses() + ", canViewReports=" + user.getCanViewReports() +
+                "Updated permissions for " + user.getUsername() +
+                ": canTakeOrders=" + user.getCanTakeOrders() + ", canManageInventory=" + user.getCanManageInventory() +
+                ", canCancelOrder=" + user.getCanCancelOrder() +
                 ", canPrintBill=" + user.getCanPrintBill() + ", canManageMenu=" + user.getCanManageMenu()
                 + ", canManageSettings=" + user.getCanManageSettings());
         return toDTO(saved);
@@ -371,11 +367,9 @@ public class UserService {
                              user.getRole() == User.Role.GENERAL_MANAGER ||
                              user.getRole() == User.Role.MANAGER;
 
-        boolean canBill = isElevated || Boolean.TRUE.equals(user.getCanBill());
         boolean canTakeOrders = isElevated || Boolean.TRUE.equals(user.getCanTakeOrders());
         boolean canManageInventory = isElevated || Boolean.TRUE.equals(user.getCanManageInventory());
-        boolean canManageExpenses = isElevated || Boolean.TRUE.equals(user.getCanManageExpenses());
-        boolean canViewReports = isElevated || Boolean.TRUE.equals(user.getCanViewReports());
+        boolean canCancelOrder = isElevated || Boolean.TRUE.equals(user.getCanCancelOrder());
 
         String tenantName = null;
         String logoUrl = null;
@@ -401,11 +395,9 @@ public class UserService {
                 .role(user.getRole().name())
                 .active(user.getActive())
                 .mustChangePassword(Boolean.TRUE.equals(user.getMustChangePassword()))
-                .canBill(canBill)
                 .canTakeOrders(canTakeOrders)
                 .canManageInventory(canManageInventory)
-                .canManageExpenses(canManageExpenses)
-                .canViewReports(canViewReports)
+                .canCancelOrder(canCancelOrder)
                 .canPrintBill(isElevated || Boolean.TRUE.equals(user.getCanPrintBill()))
                 .canManageMenu(AccessPolicy.managementAuthorities(user).contains(AccessPolicy.PERM_MANAGE_MENU))
                 .canManageSettings(AccessPolicy.managementAuthorities(user).contains(AccessPolicy.PERM_MANAGE_OUTLET_SETTINGS))
@@ -500,11 +492,9 @@ public class UserService {
                              u.getRole() == User.Role.GENERAL_MANAGER ||
                              u.getRole() == User.Role.MANAGER;
 
-        boolean canBill = isElevated || Boolean.TRUE.equals(u.getCanBill());
         boolean canTakeOrders = isElevated || Boolean.TRUE.equals(u.getCanTakeOrders());
         boolean canManageInventory = isElevated || Boolean.TRUE.equals(u.getCanManageInventory());
-        boolean canManageExpenses = isElevated || Boolean.TRUE.equals(u.getCanManageExpenses());
-        boolean canViewReports = isElevated || Boolean.TRUE.equals(u.getCanViewReports());
+        boolean canCancelOrder = isElevated || Boolean.TRUE.equals(u.getCanCancelOrder());
 
         String outletName = null;
         if (u.getOutletId() != null) {
@@ -519,11 +509,9 @@ public class UserService {
                 .employeeId(u.getEmployeeId())
                 .employeeName(employeeName)
                 .active(u.getActive())
-                .canBill(canBill)
                 .canTakeOrders(canTakeOrders)
                 .canManageInventory(canManageInventory)
-                .canManageExpenses(canManageExpenses)
-                .canViewReports(canViewReports)
+                .canCancelOrder(canCancelOrder)
                 .canPrintBill(isElevatedRole(u.getRole()) || Boolean.TRUE.equals(u.getCanPrintBill()))
                 .canManageMenu(AccessPolicy.managementAuthorities(u).contains(AccessPolicy.PERM_MANAGE_MENU))
                 .canManageSettings(AccessPolicy.managementAuthorities(u).contains(AccessPolicy.PERM_MANAGE_OUTLET_SETTINGS))

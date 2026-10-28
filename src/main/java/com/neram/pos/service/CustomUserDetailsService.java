@@ -46,17 +46,12 @@ public class CustomUserDetailsService implements UserDetailsService {
                              user.getRole() == User.Role.GENERAL_MANAGER ||
                              user.getRole() == User.Role.MANAGER;
 
-        boolean canBill = isElevated || Boolean.TRUE.equals(user.getCanBill());
         boolean canTakeOrders = isElevated || Boolean.TRUE.equals(user.getCanTakeOrders());
         boolean canManageInventory = isElevated || Boolean.TRUE.equals(user.getCanManageInventory());
-        boolean canManageExpenses = isElevated || Boolean.TRUE.equals(user.getCanManageExpenses());
-        boolean canViewReports = isElevated || Boolean.TRUE.equals(user.getCanViewReports());
+        boolean canCancelOrder = isElevated || Boolean.TRUE.equals(user.getCanCancelOrder());
 
         if (Boolean.TRUE.equals(user.getMustChangePassword())) {
             authorities.add(new SimpleGrantedAuthority(PASSWORD_CHANGE_REQUIRED));
-        }
-        if (canBill) {
-            authorities.add(new SimpleGrantedAuthority("PERM_BILL"));
         }
         if (canTakeOrders) {
             authorities.add(new SimpleGrantedAuthority("PERM_TAKE_ORDERS"));
@@ -68,11 +63,8 @@ public class CustomUserDetailsService implements UserDetailsService {
         if (canManageInventory) {
             authorities.add(new SimpleGrantedAuthority("PERM_MANAGE_INVENTORY"));
         }
-        if (canManageExpenses) {
-            authorities.add(new SimpleGrantedAuthority("PERM_MANAGE_EXPENSES"));
-        }
-        if (canViewReports) {
-            authorities.add(new SimpleGrantedAuthority("PERM_VIEW_REPORTS"));
+        if (canCancelOrder) {
+            authorities.add(new SimpleGrantedAuthority(com.neram.pos.access.AccessPolicy.PERM_CANCEL_ORDER));
         }
 
         com.neram.pos.access.AccessPolicy.managementAuthorities(user)

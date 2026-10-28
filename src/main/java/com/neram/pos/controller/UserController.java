@@ -177,7 +177,7 @@ public class UserController {
 
     /**
      * PATCH /api/users/{id}/permissions
-     * Body: { "canBill": true, "canTakeOrders": true, "canManageInventory": false, "canManageExpenses": false, "canViewReports": false }
+     * Body: { "canTakeOrders": true, "canManageInventory": false, "canCancelOrder": false }
      */
     @RequestMapping(value = "/{id}/permissions", method = {RequestMethod.PUT, RequestMethod.PATCH})
     @PreAuthorize("hasAuthority('PERM_MANAGE_STAFF')")

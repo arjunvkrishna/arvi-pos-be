@@ -24,6 +24,8 @@ public final class AccessPolicy {
     /** Own-branch settings: branch profile, printers, receipt text, branch payment QR. */
     public static final String PERM_MANAGE_OUTLET_SETTINGS = "PERM_MANAGE_OUTLET_SETTINGS";
     public static final String PERM_MANAGE_STAFF = "PERM_MANAGE_STAFF";
+    /** Cancel or void an order that is not yet paid. Owners and managers always have it; staff only when given it. */
+    public static final String PERM_CANCEL_ORDER = "PERM_CANCEL_ORDER";
 
     private AccessPolicy() {
     }

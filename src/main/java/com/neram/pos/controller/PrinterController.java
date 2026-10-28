@@ -143,7 +143,7 @@ public class PrinterController {
     }
 
     @PostMapping("/print-kot-cancel/{billId}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER') or hasAuthority('PERM_TAKE_ORDERS')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER') or hasAuthority('PERM_CANCEL_ORDER')")
     public ResponseEntity<PrintResultDTO> printKotCancel(
             @PathVariable Long billId,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKeyHeader,

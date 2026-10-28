@@ -42,7 +42,7 @@ class UserControllerProfileTest {
                 .employeeName("Jane Doe")
                 .role("EMPLOYEE")
                 .email("jane@cafe.internal")
-                .canBill(true)
+                .canCancelOrder(true)
                 .canTakeOrders(true)
                 .build();
 
@@ -54,7 +54,7 @@ class UserControllerProfileTest {
         assertNotNull(res.getBody());
         assertEquals("staff_jane", res.getBody().getUsername());
         assertEquals("Jane Doe", res.getBody().getEmployeeName());
-        assertTrue(res.getBody().getCanBill());
+        assertTrue(res.getBody().getCanCancelOrder());
     }
 
     @Test

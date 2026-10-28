@@ -122,11 +122,9 @@ class EndpointAccessMatrixTest {
         user.setActive(true);
         user.setOutletId(10L);
         // a bare account: no toggles on, so only what the role itself brings
-        user.setCanBill(false);
         user.setCanTakeOrders(false);
         user.setCanManageInventory(false);
-        user.setCanManageExpenses(false);
-        user.setCanViewReports(false);
+        user.setCanCancelOrder(false);
         user.setCanPrintBill(false);
         user.setCanManageMenu(false);
         user.setCanManageSettings(false);
@@ -226,7 +224,7 @@ class EndpointAccessMatrixTest {
         Authentication plainBranchManager = person(Role.MANAGER);
         Authentication menuBranchManager = person(Role.MANAGER, u -> u.setCanManageMenu(true));
         Authentication menuStaff = person(Role.EMPLOYEE, u -> u.setCanManageMenu(true));
-        Authentication busyStaff = person(Role.CASHIER, u -> { u.setCanBill(true); u.setCanTakeOrders(true); u.setCanManageInventory(true); });
+        Authentication busyStaff = person(Role.CASHIER, u -> { u.setCanTakeOrders(true); u.setCanManageInventory(true); u.setCanCancelOrder(true); });
         for (Endpoint e : listed(MENU_WRITES)) {
             assertNotNull(e.rule(), e.key());
             for (Role wide : List.of(Role.ADMIN, Role.CAFE_ADMIN, Role.GENERAL_MANAGER)) assertTrue(allows(e.rule(), person(wide)), wide + " " + e.path());
@@ -278,18 +276,15 @@ class EndpointAccessMatrixTest {
     }
 
     @Test
-    @DisplayName("staff given the order, print, stock, expense, billing or report permission get that work and no manager screen")
+    @DisplayName("staff given the order, print, stock or cancel permission get that work and no manager screen")
     void staffPermissionsStayInTheirLane() throws Exception {
         Map<String, Authentication> staff = new LinkedHashMap<>();
         staff.put("canTakeOrders", person(Role.EMPLOYEE, u -> u.setCanTakeOrders(true)));
-        staff.put("canBill", person(Role.CASHIER, u -> u.setCanBill(true)));
+        staff.put("canCancelOrder", person(Role.CASHIER, u -> u.setCanCancelOrder(true)));
         staff.put("canPrintBill", person(Role.EMPLOYEE, u -> u.setCanPrintBill(true)));
         staff.put("canManageInventory", person(Role.EMPLOYEE, u -> u.setCanManageInventory(true)));
-        staff.put("canManageExpenses", person(Role.EMPLOYEE, u -> u.setCanManageExpenses(true)));
-        staff.put("canViewReports", person(Role.EMPLOYEE, u -> u.setCanViewReports(true)));
         staff.put("everything at once", person(Role.CAPTAIN, u -> {
-            u.setCanBill(true); u.setCanTakeOrders(true); u.setCanPrintBill(true);
-            u.setCanManageInventory(true); u.setCanManageExpenses(true); u.setCanViewReports(true);
+            u.setCanTakeOrders(true); u.setCanPrintBill(true); u.setCanManageInventory(true); u.setCanCancelOrder(true);
         }));
         // the controllers whose screens are for managers only: no staff permission may open any of them
         Set<String> managerOnly = Set.of("CustomerController", "CouponController", "DocumentController", "ShiftScheduleController",
@@ -305,6 +300,24 @@ class EndpointAccessMatrixTest {
             staff.forEach((perm, who) -> { if (allows(e.rule(), who)) leaks.add(perm + " -> " + e.key()); });
         }
         assertTrue(leaks.isEmpty(), "A single permission opens a manager screen: " + leaks);
+    }
+
+    @Test
+    @DisplayName("cancelling an order is its own permission: taking orders does not include it, managers always have it")
+    void cancellingIsItsOwnPermission() throws Exception {
+        Set<String> cancelRoutes = Set.of("BillController#cancelBill", "BillController#voidBill", "PrinterController#printKotCancel");
+        Authentication takesOrders = person(Role.CASHIER, u -> u.setCanTakeOrders(true));
+        Authentication mayCancel = person(Role.EMPLOYEE, u -> u.setCanCancelOrder(true));
+        for (Endpoint e : listed(cancelRoutes)) {
+            assertNotNull(e.rule(), e.key());
+            assertFalse(allows(e.rule(), takesOrders), "taking orders alone lets staff cancel: " + e.path());
+            assertFalse(allows(e.rule(), person(Role.KITCHEN)), "kitchen staff can cancel: " + e.path());
+            assertTrue(allows(e.rule(), mayCancel), "staff given the permission cannot cancel: " + e.path());
+            for (Role r : List.of(Role.ADMIN, Role.CAFE_ADMIN, Role.GENERAL_MANAGER, Role.MANAGER)) {
+                assertTrue(allows(e.rule(), person(r)), r + " cannot cancel: " + e.path());
+            }
+        }
+        assertEquals(cancelRoutes.size(), listed(cancelRoutes).size(), "a cancel route moved: update this test");
     }
 
     @Test

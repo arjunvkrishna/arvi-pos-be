@@ -16,11 +16,9 @@ public class LoginResponse {
     private String role;
     private Long employeeId;
     private String employeeName;
-    private Boolean canBill;
+    private Boolean canCancelOrder;
     private Boolean canTakeOrders;
     private Boolean canManageInventory;
-    private Boolean canManageExpenses;
-    private Boolean canViewReports;
     private Boolean canPrintBill;
     private Boolean canManageMenu;
     private Boolean canManageSettings;

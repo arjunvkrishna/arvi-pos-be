@@ -139,7 +139,7 @@ class UserHierarchyTest {
         assertThrows(RuntimeException.class, () -> service.updateUserPermissions(6L, move, "MANAGER"));
 
         UpdateUserPermissionsRequestDTO own = new UpdateUserPermissionsRequestDTO();
-        own.setCanBill(true);
+        own.setCanCancelOrder(true);
         assertThrows(RuntimeException.class, () -> service.updateUserPermissions(5L, own, "MANAGER"), "other branch");
         assertDoesNotThrow(() -> service.updateUserPermissions(6L, own, "MANAGER"));
     }

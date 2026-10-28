@@ -113,13 +113,13 @@ public class BillController {
     }
 
     @PostMapping("/{id}/cancel")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER') or hasAuthority('PERM_TAKE_ORDERS')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER') or hasAuthority('PERM_CANCEL_ORDER')")
     public ResponseEntity<BillResponseDTO> cancelBill(@PathVariable Long id) {
         return ResponseEntity.ok(billService.cancelBill(id));
     }
 
     @PostMapping("/{id}/void")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER') or hasAuthority('PERM_TAKE_ORDERS')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER') or hasAuthority('PERM_CANCEL_ORDER')")
     public ResponseEntity<BillResponseDTO> voidBill(
             @PathVariable Long id,
             @RequestParam(required = false) String reason,

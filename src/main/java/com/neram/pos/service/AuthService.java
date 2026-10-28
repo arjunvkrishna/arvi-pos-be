@@ -105,11 +105,9 @@ public class AuthService {
                 .username(admin.username())
                 .role(User.Role.SUPER_ADMIN.name())
                 .employeeName(admin.fullName() != null ? admin.fullName() : admin.username())
-                .canBill(true)
                 .canTakeOrders(true)
                 .canManageInventory(true)
-                .canManageExpenses(true)
-                .canViewReports(true)
+                .canCancelOrder(true)
                 .mustChangePassword(admin.mustChangePassword())
                 .message("Login successful")
                 .build();
@@ -164,11 +162,9 @@ public class AuthService {
                              user.getRole() == User.Role.CAFE_ADMIN ||
                              user.getRole() == User.Role.GENERAL_MANAGER ||
                              user.getRole() == User.Role.MANAGER;
-        boolean canBill = isElevated || Boolean.TRUE.equals(user.getCanBill());
         boolean canTakeOrders = isElevated || Boolean.TRUE.equals(user.getCanTakeOrders());
         boolean canManageInventory = isElevated || Boolean.TRUE.equals(user.getCanManageInventory());
-        boolean canManageExpenses = isElevated || Boolean.TRUE.equals(user.getCanManageExpenses());
-        boolean canViewReports = isElevated || Boolean.TRUE.equals(user.getCanViewReports());
+        boolean canCancelOrder = isElevated || Boolean.TRUE.equals(user.getCanCancelOrder());
 
         String tenantName = null;
         String tenantCode = null;
@@ -199,11 +195,9 @@ public class AuthService {
                 .role(user.getRole().name())
                 .employeeId(user.getEmployeeId())
                 .employeeName(employeeName)
-                .canBill(canBill)
                 .canTakeOrders(canTakeOrders)
                 .canManageInventory(canManageInventory)
-                .canManageExpenses(canManageExpenses)
-                .canViewReports(canViewReports)
+                .canCancelOrder(canCancelOrder)
                 .canPrintBill(isElevated || Boolean.TRUE.equals(user.getCanPrintBill()))
                 .canManageMenu(AccessPolicy.managementAuthorities(user).contains(AccessPolicy.PERM_MANAGE_MENU))
                 .canManageSettings(AccessPolicy.managementAuthorities(user).contains(AccessPolicy.PERM_MANAGE_OUTLET_SETTINGS))

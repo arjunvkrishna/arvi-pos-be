@@ -96,11 +96,9 @@ class UserServiceRbacAndProfileTest {
         assertEquals("branch_mgr", created.getUsername());
         assertEquals("MANAGER", created.getRole());
         assertEquals(5L, created.getOutletId());
-        assertTrue(created.getCanBill());
         assertTrue(created.getCanTakeOrders());
         assertTrue(created.getCanManageInventory());
-        assertTrue(created.getCanManageExpenses());
-        assertTrue(created.getCanViewReports());
+        assertTrue(created.getCanCancelOrder(), "a branch manager can always cancel orders");
     }
 
     @Test
@@ -173,19 +171,28 @@ class UserServiceRbacAndProfileTest {
         dto.setUsername("waiter_john");
         dto.setPassword("Secret@12345");
         dto.setRole("EMPLOYEE");
-        dto.setCanBill(false);
         dto.setCanTakeOrders(true);
         dto.setCanManageInventory(false);
-        dto.setCanManageExpenses(false);
-        dto.setCanViewReports(false);
+        dto.setCanCancelOrder(false);
 
         UserDTO created = userService.createUser(dto, "ADMIN");
         assertNotNull(created);
-        assertFalse(created.getCanBill());
         assertTrue(created.getCanTakeOrders());
         assertFalse(created.getCanManageInventory());
-        assertFalse(created.getCanManageExpenses());
-        assertFalse(created.getCanViewReports());
+        assertFalse(created.getCanCancelOrder(), "taking orders does not include cancelling them");
+    }
+
+    @Test
+    @DisplayName("Staff can be given the cancel-order permission at creation")
+    void testCreateStaffWhoMayCancelOrders() {
+        CreateUserRequestDTO dto = new CreateUserRequestDTO();
+        dto.setUsername("waiter_cancel");
+        dto.setPassword("Secret@12345");
+        dto.setRole("EMPLOYEE");
+        dto.setCanTakeOrders(true);
+        dto.setCanCancelOrder(true);
+
+        assertTrue(userService.createUser(dto, "ADMIN").getCanCancelOrder());
     }
 
     @Test
@@ -197,8 +204,8 @@ class UserServiceRbacAndProfileTest {
         cashierReq.setRole("CASHIER");
 
         UserDTO cashier = userService.createUser(cashierReq, "ADMIN");
-        assertTrue(cashier.getCanBill());
         assertTrue(cashier.getCanTakeOrders());
+        assertFalse(cashier.getCanCancelOrder(), "cancelling is granted per person, not by role");
 
         CreateUserRequestDTO captainReq = new CreateUserRequestDTO();
         captainReq.setUsername("captain1");
@@ -207,7 +214,7 @@ class UserServiceRbacAndProfileTest {
 
         UserDTO captain = userService.createUser(captainReq, "ADMIN");
         assertTrue(captain.getCanTakeOrders());
-        assertFalse(captain.getCanBill());
+        assertFalse(captain.getCanCancelOrder());
     }
 
     @Test
@@ -217,17 +224,17 @@ class UserServiceRbacAndProfileTest {
         existing.setId(20L);
         existing.setUsername("staff_member");
         existing.setRole(User.Role.EMPLOYEE);
-        existing.setCanBill(false);
+        existing.setCanCancelOrder(false);
         existing.setCanTakeOrders(false);
         when(userRepository.findById(20L)).thenReturn(Optional.of(existing));
 
         UpdateUserPermissionsRequestDTO updateReq = new UpdateUserPermissionsRequestDTO();
-        updateReq.setCanBill(true);
+        updateReq.setCanCancelOrder(true);
         updateReq.setCanTakeOrders(true);
         updateReq.setCanManageInventory(true);
 
         UserDTO updated = userService.updateUserPermissions(20L, updateReq, "ADMIN");
-        assertTrue(updated.getCanBill());
+        assertTrue(updated.getCanCancelOrder());
         assertTrue(updated.getCanTakeOrders());
         assertTrue(updated.getCanManageInventory());
     }
@@ -242,7 +249,7 @@ class UserServiceRbacAndProfileTest {
         when(userRepository.findById(30L)).thenReturn(Optional.of(managerAcc));
 
         UpdateUserPermissionsRequestDTO updateReq = new UpdateUserPermissionsRequestDTO();
-        updateReq.setCanBill(true);
+        updateReq.setCanCancelOrder(true);
 
         RuntimeException ex = assertThrows(RuntimeException.class,
                 () -> userService.updateUserPermissions(30L, updateReq, "MANAGER"));
@@ -332,11 +339,9 @@ class UserServiceRbacAndProfileTest {
         assertEquals("Arjun Kumar", profile.getEmployeeName());
         assertEquals("arjun@cafe.internal", profile.getEmail());
         assertEquals("HDFC Bank", profile.getBankName());
-        assertTrue(profile.getCanBill());
         assertTrue(profile.getCanTakeOrders());
         assertTrue(profile.getCanManageInventory());
-        assertTrue(profile.getCanManageExpenses());
-        assertTrue(profile.getCanViewReports());
+        assertTrue(profile.getCanCancelOrder());
     }
 
     @Test

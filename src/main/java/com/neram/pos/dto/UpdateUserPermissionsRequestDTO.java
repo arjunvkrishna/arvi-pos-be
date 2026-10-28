@@ -8,11 +8,9 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class UpdateUserPermissionsRequestDTO {
-    private Boolean canBill;
+    private Boolean canCancelOrder;
     private Boolean canTakeOrders;
     private Boolean canManageInventory;
-    private Boolean canManageExpenses;
-    private Boolean canViewReports;
     private Long outletId;
     private Boolean canPrintBill;
     private Boolean canManageMenu;

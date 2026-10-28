@@ -24,6 +24,7 @@ Neram's V71-V83 collided with this project's own V71/V72, so they were renumbere
 | V85 | split-payment modes fit loyalty points | V83 |
 | **V86** | `outlet_id` on tip pools, documents, report jobs; tip pool unique per branch per day | new |
 | **V87** | table names unique per branch; `dining_tables.floor`; one open cash drawer per branch | new |
+| **V88** | `users.can_cancel_order` (existing order-takers keep the ability); unused bill/expenses/reports toggles unmapped | new |
 
 ## What the single-cafe code had to change to work here
 
@@ -52,14 +53,17 @@ owner (ADMIN / CAFE_ADMIN)  >  main manager (GENERAL_MANAGER)  >  branch manager
 * Documents: branch users can read cafe-wide documents but not change them; an attachment is only reachable through its document.
 * Report files: the requester, or an owner / main manager. A branch manager only ever gets their own branch's figures.
 * `GET /api/outlets` returns every branch only to owner and main manager; everyone else sees their own.
+* **Cancelling an order is its own permission** (`PERM_CANCEL_ORDER`, the "can cancel order" toggle). Taking orders no longer
+  includes it. It covers cancel, void and the CANCELLED kitchen ticket for orders that are not yet paid; paid bills still go
+  through the refund workflow. Owners and managers always have it. V88 gives it to everyone who could cancel before, so
+  nothing changes on deploy; a manager can then switch it off per person. The old "can bill / expenses / reports" toggles were
+  never checked by any endpoint and are gone from the API.
 
 `EndpointAccessMatrixTest` checks every endpoint against these tiers using the authorities `CustomUserDetailsService` really
 produces. A new endpoint without a `@PreAuthorize` fails the build unless it is listed as open on purpose.
 
 ## Known gaps (not changed here)
 
-* The staff toggles `canBill`, `canManageExpenses`, `canViewReports` are not enforced by any endpoint; only order-taking,
-  printing and inventory toggles are. Decide whether to wire them or remove them from the staff screen.
 * `GET /api/gift-cards` returns Spring Data's `Page` directly (Spring Data 4 warns this shape is not stable).
 * OpenPDF stays at 2.0.5: every newer release needs Java 21.
 * Bridge firmware: set `OUTLET_CODE` on every bridge of a multi-branch cafe (see the bridge README).

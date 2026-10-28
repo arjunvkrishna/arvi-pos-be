@@ -19,11 +19,9 @@ public class UserProfileDTO {
     private String role;
     private Boolean active;
     private Boolean mustChangePassword;
-    private Boolean canBill;
+    private Boolean canCancelOrder;
     private Boolean canTakeOrders;
     private Boolean canManageInventory;
-    private Boolean canManageExpenses;
-    private Boolean canViewReports;
     private Long tenantId;
     private String tenantName;
     private Long outletId;

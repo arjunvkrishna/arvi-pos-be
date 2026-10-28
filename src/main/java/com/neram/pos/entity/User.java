@@ -38,20 +38,16 @@ public class User implements com.neram.pos.tenancy.TenantScoped , com.neram.pos.
     @Column(name = "outlet_id")
     private Long outletId;
 
-    @Column(name = "can_bill", nullable = false)
-    private Boolean canBill = true;
-
     @Column(name = "can_take_orders", nullable = false)
     private Boolean canTakeOrders = true;
 
     @Column(name = "can_manage_inventory", nullable = false)
     private Boolean canManageInventory = false;
 
-    @Column(name = "can_manage_expenses", nullable = false)
-    private Boolean canManageExpenses = false;
+    /** May cancel or void an order that is not yet paid (paid bills go through the refund workflow). Owners and managers always may. */
+    @Column(name = "can_cancel_order", nullable = false)
+    private Boolean canCancelOrder = false;
 
-    @Column(name = "can_view_reports", nullable = false)
-    private Boolean canViewReports = false;
     @Column(name = "can_print_bill", nullable = false)
     private Boolean canPrintBill = false;
 
