@@ -120,6 +120,50 @@ public class NotificationStreamService {
         }
     }
 
+    /** Signals only one manager's own open screens (their other tabs and devices), after commit. Others are not disturbed. */
+    public void publishChangedForUserAfterCommit(String username) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    broadcastToUser(username);
+                }
+            });
+        } else {
+            broadcastToUser(username);
+        }
+    }
+
+    void broadcastToUser(String username) {
+        // Every cafe has its own "admin": the key and the send are both limited to the cafe doing the work.
+        long tenantId = currentTenantId();
+        String key = tenantId + ":" + NOTIFICATIONS_EVENT + "@" + username;
+        if (pendingBroadcasts.add(key)) {
+            try {
+                sender.execute(() -> {
+                    pendingBroadcasts.remove(key);
+                    sendToUser(tenantId, username);
+                });
+            } catch (RuntimeException rejected) {
+                pendingBroadcasts.remove(key);
+            }
+        }
+    }
+
+    private void sendToUser(long tenantId, String username) {
+        for (Client c : clients.values()) {
+            if (c.tenantId() != tenantId || !c.channel().equals(NOTIFICATIONS_EVENT) || !c.username().equals(username)) {
+                continue;
+            }
+            try {
+                c.emitter().send(SseEmitter.event().name(NOTIFICATIONS_EVENT).data("1"));
+            } catch (IOException | IllegalStateException e) {
+                clients.remove(c.id());
+                try { c.emitter().complete(); } catch (Exception ignored) { }
+            }
+        }
+    }
+
     /**
      * Signals POS subscribers that orders/tables changed. Called from entity lifecycle callbacks, so it can fire many
      * times in one transaction; it registers a single after-commit signal per transaction. Nothing is sent on rollback.
@@ -184,6 +228,7 @@ public class NotificationStreamService {
     /** Keeps proxies from closing idle streams and evicts connections whose browser has gone away. */
     @Scheduled(fixedDelay = 25000, initialDelay = 25000)
     void heartbeat() {
+        if (!com.neram.pos.config.JobMode.interactive()) return;
         for (Client c : clients.values()) {
             try {
                 c.emitter().send(SseEmitter.event().comment("ping"));

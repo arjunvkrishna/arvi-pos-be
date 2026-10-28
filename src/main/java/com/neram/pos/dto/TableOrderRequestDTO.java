@@ -10,6 +10,7 @@ public class TableOrderRequestDTO {
     private String orderType;
     private String tableNumber;
     private String customerName;
+    private Long customerId;
     private String outdoorToken;
     private String takeawayToken;
     private BigDecimal parcelCharge;
@@ -29,5 +30,7 @@ public class TableOrderRequestDTO {
         private BigDecimal price;
         private String customization;
         private Boolean isTakeaway;
+        private String modifiersSnapshot;
+        private String comboSnapshot;
     }
 }

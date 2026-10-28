@@ -8,7 +8,9 @@ import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
@@ -130,13 +132,19 @@ public class CashierShiftController {
     }
 
     @GetMapping("/settings")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
     public ResponseEntity<CashierShiftDTO.ShiftSettingsDTO> getSettings() {
         return ResponseEntity.ok(shiftService.getSettingsDTO());
     }
 
+    /** Managers may tune the drawer-anomaly thresholds; switching the whole shift module on or off is the admin's call. */
     @PutMapping("/settings")
     @PreAuthorize("hasAuthority('PERM_MANAGE_SETTINGS')")
-    public ResponseEntity<CashierShiftDTO.ShiftSettingsDTO> updateSettings(@RequestBody CashierShiftDTO.ShiftSettingsDTO req) {
+    public ResponseEntity<CashierShiftDTO.ShiftSettingsDTO> updateSettings(@RequestBody CashierShiftDTO.ShiftSettingsDTO req, Authentication auth) {
+        boolean owner = auth != null && auth.getAuthorities().stream().anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
+        if (req.getEnabled() != null && !owner) {
+            throw new AccessDeniedException("Only the cafe owner can switch the Cashier Shift module on or off.");
+        }
         return ResponseEntity.ok(shiftService.updateSettings(req));
     }
 }

@@ -90,6 +90,10 @@ public class PrintBridgeService {
      * Check if a bridge container has reported a heartbeat within the last 30 seconds
      */
     /** Epoch millis of the last bridge heartbeat, 0 if none was received since this backend started. */
+    /** Optional: tests build this service without one. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private AuditLogService auditLogService;
+
     public long getLastHeartbeatTimestamp() {
         return state().lastHeartbeat.get();
     }
@@ -429,6 +433,61 @@ public class PrintBridgeService {
     }
 
     /**
+     * The staff app printed (or tried to print) a ticket it was handed with {@link DevicePrintScope}.
+     * PRINTED completes the job; NOT_SENT (nothing reached the printer) gives it straight to the cloud bridge;
+     * UNSURE (the connection broke part-way) goes to review rather than risk a double print.
+     * Only the device that holds the claim can report, and a repeated report is harmless.
+     */
+    @Transactional
+    public PrintJobStatusDTO recordDeviceResult(String jobId, String deviceId, String outcome, String message, Integer bytesWritten) {
+        PrintJob job = printJobRepository.findByJobId(jobId)
+                .orElseThrow(() -> new IllegalArgumentException("Print job not found: " + jobId));
+        if (!deviceId.equals(job.getClaimedByBridgeId())) {
+            throw new IllegalStateException("This print job belongs to another device");
+        }
+        String result = outcome == null ? "" : outcome.trim().toUpperCase(java.util.Locale.ROOT);
+        switch (result) {
+            case "PRINTED" -> {
+                if (job.getStatus() != PrintJobStatus.COMPLETED) {
+                    recordJobCompleted(jobId, deviceId, message != null ? message : "Printed directly from " + deviceId, bytesWritten);
+                }
+            }
+            case "NOT_SENT" -> {
+                if (job.getStatus() == PrintJobStatus.CLAIMED) {
+                    job.setStatus(PrintJobStatus.PENDING);
+                    job.setNextEligibleAt(LocalDateTime.now());
+                    job.setLeaseExpiresAt(null);
+                    job.setLastErrorMessage("Could not reach the printer from the phone; sent through the cloud bridge"
+                            + (message != null && !message.isBlank() ? " (" + message + ")" : ""));
+                    job.setUpdatedAt(LocalDateTime.now());
+                    printJobRepository.save(job);
+                    log.info("Job {} handed back by {}; the cloud bridge will print it", jobId, deviceId);
+                    notifyJobAvailable();
+                }
+            }
+            case "UNSURE" -> {
+                if (job.getStatus() == PrintJobStatus.CLAIMED) {
+                    recordJobFailed(jobId, deviceId, true, message != null ? message : "Connection broke while printing from the phone", bytesWritten);
+                }
+            }
+            default -> throw new IllegalArgumentException("Unknown outcome: " + outcome);
+        }
+        auditDeviceResult(job, deviceId, result, message);
+        return getJobStatus(jobId);
+    }
+
+    /** One line per ticket a phone handled itself: who, which printer, and how it went. Never blocks printing. */
+    private void auditDeviceResult(PrintJob job, String deviceId, String result, String message) {
+        if (auditLogService == null) return;
+        String action = switch (result) { case "PRINTED" -> "DIRECT_PRINT"; case "NOT_SENT" -> "DIRECT_PRINT_FALLBACK"; default -> "DIRECT_PRINT_REVIEW"; };
+        String detail = "type=" + job.getJobType() + " bill=" + (job.getBillNumber() == null ? "-" : job.getBillNumber())
+                + " printer=" + job.getTargetPrinterHost() + ":" + job.getTargetPrinterPort() + " device=" + deviceId
+                + (message == null || message.isBlank() ? "" : " note=" + (message.length() > 120 ? message.substring(0, 120) : message));
+        try { auditLogService.log(action, "PRINT_JOB", job.getId(), null, detail); }
+        catch (Exception e) { log.warn("Could not write audit entry {}: {}", action, e.getMessage()); }
+    }
+
+    /**
      * Sync results for jobs executed or queued while bridge was offline
      */
     @Transactional
@@ -526,6 +585,7 @@ public class PrintBridgeService {
      */
     @Transactional
     public void sweepExpiredLeases() {
+        if (!com.neram.pos.config.JobMode.interactive()) return;
         LocalDateTime now = LocalDateTime.now();
         List<PrintJob> expired = printJobRepository.findExpiredClaimedJobs(PrintJobStatus.CLAIMED, now);
         for (PrintJob job : expired) {
@@ -555,6 +615,7 @@ public class PrintBridgeService {
      */
     @Transactional
     public void purgeOldPayloads() {
+        if (!com.neram.pos.config.JobMode.interactive()) return;
         LocalDateTime threshold = LocalDateTime.now().minusHours(24);
         int purged = printJobRepository.purgePayloadsOlderThan(threshold);
         if (purged > 0) {

@@ -19,8 +19,13 @@ public class DiningTable implements com.neram.pos.tenancy.TenantScoped , com.ner
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, unique = true, length = 50)
+    /** Unique inside its branch (see V87), not across the cafe: every branch has its own T1, T2 ... */
+    @Column(nullable = false, length = 50)
     private String name;
+
+    /** Floor or section the table is on (Ground, First floor, Terrace ...); null when the branch does not use floors. */
+    @Column(length = 50)
+    private String floor;
 
     @Column(nullable = false)
     @Builder.Default

@@ -20,6 +20,7 @@ import java.util.Map;
 public class SupplierController {
 
     private final SupplierService supplierService;
+    private final com.neram.pos.service.SupplierAnalyticsService supplierAnalyticsService;
     private final UserRepository userRepository;
 
     // ─── Supplier Master ─────────────────────────────────────────────────────────
@@ -83,7 +84,7 @@ public class SupplierController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','MANAGER')")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Map<String, String>> deleteSupplier(
             @PathVariable Long id, Authentication auth) {
         supplierService.deleteSupplier(id, auth.getName());
@@ -134,7 +135,7 @@ public class SupplierController {
     }
 
     @DeleteMapping("/invoices/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','MANAGER')")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Map<String, String>> deleteInvoice(
             @PathVariable Long id, Authentication auth) {
         supplierService.deleteInvoice(id, auth.getName());
@@ -185,6 +186,12 @@ public class SupplierController {
     @PreAuthorize("hasAnyRole('ADMIN','MANAGER')")
     public ResponseEntity<SupplierAnalyticsDTO> getAnalytics() {
         return ResponseEntity.ok(supplierService.getAnalytics());
+    }
+
+    @GetMapping("/{id}/analytics")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER')")
+    public ResponseEntity<SupplierAnalyticsDTO> getSupplierAnalytics(@PathVariable Long id) {
+        return ResponseEntity.ok(supplierAnalyticsService.getSupplierAnalytics(id));
     }
 
     // ─── Helper ──────────────────────────────────────────────────────────────────

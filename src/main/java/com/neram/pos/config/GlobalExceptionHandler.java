@@ -154,6 +154,13 @@ public class GlobalExceptionHandler {
         return buildResponse(HttpStatus.BAD_REQUEST, msg, request, null);
     }
 
+    /** An unknown URL (a typo, a bot probing) is a plain 404, not a "critical unhandled error". */
+    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleNoResource(org.springframework.web.servlet.resource.NoResourceFoundException e, HttpServletRequest request) {
+        log.debug("No resource [method={}, path={}]", getMethod(request), getPath(request));
+        return buildResponse(HttpStatus.NOT_FOUND, "Not found", request, null);
+    }
+
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
     public ResponseEntity<Map<String, Object>> handleMethodNotSupported(HttpRequestMethodNotSupportedException e, HttpServletRequest request) {
         String msg = String.format("HTTP %s method is not supported for this endpoint. Supported: %s",
@@ -189,6 +196,8 @@ public class GlobalExceptionHandler {
             message = "A required field is missing.";
         } else if ("23503".equals(sqlState)) {
             message = "This record is linked to other data and cannot be changed or removed that way.";
+        } else if ("23P01".equals(sqlState) || causeMsg.contains("no_overlapping_shifts")) {
+            message = "Employee has an overlapping shift scheduled.";
         } else {
             message = "The data could not be saved because it conflicts with existing records.";
         }

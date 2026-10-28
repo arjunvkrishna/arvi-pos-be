@@ -26,4 +26,6 @@ public class PrintResultDTO {
     private boolean retryable;
     /** Non-fatal heads-up for the operator, e.g. the printer is offline so the ticket will wait in the queue. */
     private String warning;
+    /** Only when the app asked to print from the phone: the tickets it must send to the printers itself. */
+    private java.util.List<DevicePrintJobDTO> deviceJobs;
 }

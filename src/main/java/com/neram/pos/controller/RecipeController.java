@@ -17,11 +17,13 @@ public class RecipeController {
     private final RecipeService recipeService;
 
     @GetMapping("/menu-item/{menuItemId}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER') or hasAuthority('PERM_MANAGE_INVENTORY')")
     public ResponseEntity<List<RecipeDTO.RecipeResponse>> getRecipesForMenuItem(@PathVariable Long menuItemId) {
         return ResponseEntity.ok(recipeService.getRecipesForMenuItem(menuItemId));
     }
 
     @GetMapping
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER') or hasAuthority('PERM_MANAGE_INVENTORY')")
     public ResponseEntity<List<RecipeDTO.RecipeResponse>> getAllRecipes() {
         return ResponseEntity.ok(recipeService.getAllRecipes());
     }

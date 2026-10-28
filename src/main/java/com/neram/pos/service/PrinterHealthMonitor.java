@@ -102,6 +102,7 @@ public class PrinterHealthMonitor {
 
     /** Run once per cafe whose bridge has connected since startup; see PrinterHealthJob. */
     public void scheduledCheck() {
+        if (!com.neram.pos.config.JobMode.interactive()) return;
         try {
             check();
         } catch (Exception e) {

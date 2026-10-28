@@ -10,8 +10,10 @@ import java.util.List;
 public interface EmployeeRepository extends JpaRepository<Employee, Long> {
     List<Employee> findByActiveTrue();
     List<Employee> findByRole(Employee.Role role);
+    List<Employee> findByRoleIn(java.util.Collection<Employee.Role> roles);
     List<Employee> findByRoleAndActiveTrue(Employee.Role role);
     org.springframework.data.domain.Page<Employee> findByActiveTrue(org.springframework.data.domain.Pageable pageable);
+    org.springframework.data.domain.Page<Employee> findByActiveTrueAndRoleIn(java.util.Collection<Employee.Role> roles, org.springframework.data.domain.Pageable pageable);
     org.springframework.data.domain.Page<Employee> findByActiveTrueAndRoleNot(Employee.Role role, org.springframework.data.domain.Pageable pageable);
     org.springframework.data.domain.Page<Employee> findByRoleAndActiveTrue(Employee.Role role, org.springframework.data.domain.Pageable pageable);
 

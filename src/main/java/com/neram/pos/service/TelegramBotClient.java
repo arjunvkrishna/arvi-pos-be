@@ -41,11 +41,14 @@ public class TelegramBotClient {
         return !botToken.isBlank();
     }
 
+    /** The webhook is open to the internet, so without a configured secret every call is refused. */
     public boolean verifyWebhookSecret(String secretHeader) {
-        if (webhookSecret.isBlank()) {
-            return true; // No secret configured
+        if (webhookSecret.isBlank() || secretHeader == null) {
+            return false;
         }
-        return webhookSecret.equals(secretHeader);
+        return java.security.MessageDigest.isEqual(
+                webhookSecret.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                secretHeader.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     public synchronized String getBotUsername() {

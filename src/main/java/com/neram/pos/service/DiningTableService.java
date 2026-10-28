@@ -30,7 +30,8 @@ public class DiningTableService {
     @Transactional
     public List<DiningTableDTO> getAllActiveTables() {
         List<DiningTable> tables = tableRepository.findByActiveTrueOrderByDisplayOrderAscIdAsc();
-        if (tables.isEmpty()) {
+        // Starter tables are only made for a real branch; the cafe-wide view (no branch picked) never invents shared tables.
+        if (tables.isEmpty() && currentBranch() != null) {
             int order = 1;
             for (String defaultName : DEFAULT_TABLE_NAMES) {
                 DiningTable t = DiningTable.builder()
@@ -45,12 +46,29 @@ public class DiningTableService {
         return tables.stream().map(this::toDTO).collect(Collectors.toList());
     }
 
+    /** The branch the caller works in (or picked); null when an owner or main manager looks at the whole cafe. */
+    private static Long currentBranch() {
+        Long branch = com.neram.pos.access.OutletContext.currentIdOrNull();
+        return branch != null && branch != com.neram.pos.access.OutletContext.NO_OUTLET ? branch : null;
+    }
+
+    private static String cleanFloor(String floor) {
+        if (floor == null || floor.isBlank()) return null;
+        String f = floor.trim();
+        if (f.length() > 50) throw new IllegalArgumentException("Floor name is too long (max 50 characters)");
+        return f;
+    }
+
     @Transactional
     public DiningTableDTO createTable(DiningTableRequestDTO request) {
         if (request == null || request.getName() == null || request.getName().trim().isBlank()) {
             throw new IllegalArgumentException("Table name is required");
         }
         String tableName = request.getName().trim();
+        if (currentBranch() == null) {
+            throw new IllegalArgumentException("Pick a branch first: a table always belongs to one branch");
+        }
+        String floor = cleanFloor(request.getFloor());
 
         // Check if an active table with same name exists
         if (tableRepository.existsByNameIgnoreCaseAndActiveTrue(tableName)) {
@@ -61,6 +79,9 @@ public class DiningTableService {
         DiningTable table = tableRepository.findByNameIgnoreCase(tableName)
                 .map(existing -> {
                     existing.setActive(true);
+                    if (request.getFloor() != null) {
+                        existing.setFloor(floor);
+                    }
                     if (request.getDisplayOrder() != null) {
                         existing.setDisplayOrder(request.getDisplayOrder());
                     }
@@ -74,6 +95,7 @@ public class DiningTableService {
                     }
                     return DiningTable.builder()
                             .name(tableName)
+                            .floor(floor)
                             .active(true)
                             .displayOrder(order)
                             .build();
@@ -115,6 +137,7 @@ public class DiningTableService {
         return DiningTableDTO.builder()
                 .id(table.getId())
                 .name(table.getName())
+                .floor(table.getFloor())
                 .active(table.getActive())
                 .displayOrder(table.getDisplayOrder())
                 .createdAt(table.getCreatedAt())

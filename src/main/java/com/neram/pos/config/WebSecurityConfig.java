@@ -34,6 +34,14 @@ public class WebSecurityConfig {
     private final JwtAuthenticationFilter jwtAuthFilter;
     private final UserDetailsService userDetailsService;
 
+    /**
+     * Browser origins allowed to call the API from another site, comma separated (CORS_ALLOWED_ORIGINS). The default
+     * keeps every origin working; in production the UI is served from the same origin through nginx, so set this to the
+     * UI's own address(es) to refuse calls from any other website.
+     */
+    @org.springframework.beans.factory.annotation.Value("${neram.cors.allowed-origins:*}")
+    private String allowedOrigins;
+
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
@@ -51,8 +59,7 @@ public class WebSecurityConfig {
                 // Async dispatch (SSE completion) only follows a request that was already authorized; the stateless
                 // context is not re-established on that dispatch, so it must not be re-checked.
                 .dispatcherTypeMatchers(jakarta.servlet.DispatcherType.ASYNC).permitAll()
-                .requestMatchers("/api/auth/**", "/api/health", "/api/printer/bridge/**", "/api/telegram/webhook", "/error").permitAll()
-                .requestMatchers(HttpMethod.GET, "/api/public/**").permitAll()
+                .requestMatchers("/api/auth/**", "/api/health", "/api/printer/bridge/**", "/api/telegram/webhook", "/error", "/api/public/**").permitAll()
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 .anyRequest().authenticated()
             )
@@ -65,7 +72,7 @@ public class WebSecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOriginPatterns(List.of("*"));
+        config.setAllowedOriginPatterns(Arrays.stream(allowedOrigins.split(",")).map(String::trim).filter(s -> !s.isEmpty()).toList());
         config.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
         config.setExposedHeaders(List.of("Authorization", "Content-Type", "X-Total-Count", "X-Total-Pages", "X-Page", "X-Page-Size"));

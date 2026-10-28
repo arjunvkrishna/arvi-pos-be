@@ -32,6 +32,12 @@ public class SupplierInvoice implements com.neram.pos.access.OutletScoped {
     @Column(name = "due_date")
     private LocalDate dueDate;
 
+    @Column(name = "expected_delivery_date")
+    private LocalDate expectedDeliveryDate;
+
+    @Column(name = "delivery_date")
+    private LocalDate deliveryDate;
+
     @Column(nullable = false, precision = 12, scale = 2)
     private java.math.BigDecimal subtotal = java.math.BigDecimal.ZERO;
 

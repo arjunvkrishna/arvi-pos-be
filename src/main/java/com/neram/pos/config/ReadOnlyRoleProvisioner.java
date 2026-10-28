@@ -45,6 +45,7 @@ public class ReadOnlyRoleProvisioner implements ApplicationRunner {
             log.debug("Read-only DB role provisioning skipped: databases are per cafe");
             return;
         }
+        if (!JobMode.interactive()) { log.info("Headless worker: skipping {}", getClass().getSimpleName()); return; }
         try {
             provision();
         } catch (Exception e) {

@@ -54,12 +54,27 @@ public class SalaryService {
         return withAdvances(salaryRepository.findByEmployeeId(employeeId, com.neram.pos.util.PagedResponse.withSort(pageable, NEWEST_PAY_FIRST)));
     }
 
+    /** The same page, leaving out the payroll of the given employees (what a manager may not see). */
+    public org.springframework.data.domain.Page<SalaryDTO> getAllSalaries(org.springframework.data.domain.Pageable pageable, java.util.Set<Long> hiddenEmployeeIds) {
+        if (hiddenEmployeeIds == null || hiddenEmployeeIds.isEmpty()) return getAllSalaries(pageable);
+        return withAdvances(salaryRepository.findByEmployeeIdNotIn(hiddenEmployeeIds, com.neram.pos.util.PagedResponse.withSort(pageable, NEWEST_PAY_FIRST)));
+    }
+
     private org.springframework.data.domain.Page<SalaryDTO> withAdvances(org.springframework.data.domain.Page<Salary> page) {
         return new org.springframework.data.domain.PageImpl<>(toDTOs(page.getContent()), page.getPageable(), page.getTotalElements());
     }
 
     public List<SalaryDTO> getSalariesByMonthYear(int month, int year) {
         return toDTOs(salaryRepository.findByMonthAndYear(month, year));
+    }
+
+    /** The month's payroll, leaving out the given employees (what a manager may not see). */
+    public List<SalaryDTO> getSalariesByMonthYear(int month, int year, java.util.Set<Long> hiddenEmployeeIds) {
+        List<Salary> all = salaryRepository.findByMonthAndYear(month, year);
+        if (hiddenEmployeeIds != null && !hiddenEmployeeIds.isEmpty()) {
+            all = all.stream().filter(sal -> !hiddenEmployeeIds.contains(sal.getEmployeeId())).collect(Collectors.toList());
+        }
+        return toDTOs(all);
     }
 
     @Transactional

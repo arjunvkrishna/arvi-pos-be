@@ -97,6 +97,7 @@ public class BillController {
     }
 
     @GetMapping("/number/{billNumber}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
     public ResponseEntity<BillResponseDTO> getBillByNumber(@PathVariable String billNumber) {
         BillResponseDTO dto = billService.getBillByNumber(billNumber);
         if (dto == null) {

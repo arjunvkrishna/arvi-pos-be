@@ -20,6 +20,7 @@ public class TelegramScheduler {
 
     @Scheduled(cron = "0 * * * * *")
     public void scheduleDailyLowStockReportCheck() {
+        if (!com.neram.pos.config.JobMode.interactive()) return;
         tenantExecutor.forEachActiveTenant("telegram-daily-report", this::checkCurrentTenant);
     }
 

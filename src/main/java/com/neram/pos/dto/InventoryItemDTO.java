@@ -17,6 +17,7 @@ public class InventoryItemDTO {
     private String unit;
     private Double quantity;
     private Double minQuantity;
+    private java.math.BigDecimal reorderLevel;
     private java.math.BigDecimal costPerUnit;
     private Double unitVolume;
     private Double volume;

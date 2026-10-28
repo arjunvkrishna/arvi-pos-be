@@ -59,7 +59,7 @@ class StockRulesTest {
     @Test
     @DisplayName("an item issued by hand is not reduced when a dish with a recipe sells; one that deducts automatically still is")
     void autoDeductSwitch() {
-        RecipeService recipes = new RecipeService(recipeRepo, menuRepo, itemRepo, txnRepo, auditLog);
+        RecipeService recipes = new RecipeService(recipeRepo, menuRepo, itemRepo, txnRepo, auditLog, org.mockito.Mockito.mock(com.neram.pos.repository.ModifierRepository.class));
         Recipe r = new Recipe(); r.setId(1L); r.setMenuItemId(7L); r.setInventoryItemId(5L); r.setQuantityPerServing(new BigDecimal("1")); r.setUnit("packet"); r.setActive(true);
         when(recipeRepo.findByMenuItemIdAndActiveTrue(7L)).thenReturn(List.of(r));
         when(txnRepo.findByBillId(1L)).thenReturn(List.of());

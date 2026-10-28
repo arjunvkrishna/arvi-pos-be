@@ -23,6 +23,7 @@ public class MenuItemController {
 
     private final MenuItemService menuItemService;
     private final MenuPriceImportService menuPriceImportService;
+    private final com.neram.pos.service.MenuVersionService menuVersionService;
 
     @GetMapping
     public ResponseEntity<List<MenuItemDTO>> getAllMenuItems(
@@ -30,6 +31,12 @@ public class MenuItemController {
             @RequestParam(required = false) String q,
             Pageable pageable) {
         return PagedResponse.of(menuItemService.searchMenuItems(availability, q, pageable));
+    }
+
+    /** Changes whenever anything about the menu changes; apps check it every few seconds and reload the menu only then. */
+    @GetMapping("/version")
+    public ResponseEntity<java.util.Map<String, String>> menuVersion() {
+        return ResponseEntity.ok(java.util.Map.of("version", menuVersionService.current()));
     }
 
     @GetMapping("/available")

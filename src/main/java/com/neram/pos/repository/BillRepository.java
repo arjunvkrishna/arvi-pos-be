@@ -14,6 +14,10 @@ import java.util.Optional;
 public interface BillRepository extends JpaRepository<Bill, Long> {
     Optional<Bill> findByBillNumber(String billNumber);
 
+    /** True when ANY bill row, soft-deleted ones included, already carries this number (bill_number is unique across all rows). */
+    @Query(value = "SELECT EXISTS (SELECT 1 FROM bills WHERE bill_number = :billNumber)", nativeQuery = true)
+    boolean existsAnyByBillNumber(@Param("billNumber") String billNumber);
+
     List<Bill> findByCreatedAtBetweenOrderByCreatedAtDesc(LocalDateTime start, LocalDateTime end);
 
     List<Bill> findAllByOrderByCreatedAtDesc();
@@ -150,4 +154,12 @@ public interface BillRepository extends JpaRepository<Bill, Long> {
 
     @Query(value = "SELECT COALESCE(MAX(CAST(NULLIF(regexp_replace(takeaway_token, '^TAK-', ''), '') AS INTEGER)), 0) FROM bills WHERE takeaway_token ~ '^TAK-[0-9]+$'", nativeQuery = true)
     Integer findMaxTakeawayTokenNumber();
+
+    List<Bill> findByBusinessDateAndStatus(java.time.LocalDate businessDate, Bill.Status status);
+
+    @Query("SELECT b FROM Bill b WHERE b.businessDate = :businessDate AND b.status = com.neram.pos.entity.Bill.Status.PAID AND b.deletedAt IS NULL")
+    List<Bill> findPaidByBusinessDate(@Param("businessDate") java.time.LocalDate businessDate);
+
+    @Query("SELECT b FROM Bill b WHERE b.businessDate BETWEEN :start AND :end AND b.status IN (com.neram.pos.entity.Bill.Status.PAID, com.neram.pos.entity.Bill.Status.PARTIALLY_REFUNDED) AND b.deletedAt IS NULL")
+    List<Bill> findPaidBillsBetweenBusinessDates(@Param("start") java.time.LocalDate start, @Param("end") java.time.LocalDate end);
 }

@@ -10,6 +10,12 @@ import java.util.List;
 public class BillRequestDTO {
     private String tableNumber;
     private String customerName;
+    private Long customerId;
+    private String customerPhone;
+    private String giftCardCode;
+    private String couponCode;
+    private Long couponId;
+    private Integer redeemLoyaltyPoints;
     private String orderType;
     private String outdoorToken;
     private String takeawayToken;
@@ -35,6 +41,8 @@ public class BillRequestDTO {
         private java.math.BigDecimal price;
         private String customization;
         private Boolean isTakeaway;
+        private String modifiersSnapshot;
+        private String comboSnapshot;
     }
 
     @Data

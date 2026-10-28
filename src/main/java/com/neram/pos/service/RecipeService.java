@@ -33,6 +33,7 @@ public class RecipeService {
     private final InventoryItemRepository inventoryItemRepository;
     private final InventoryTransactionRepository inventoryTransactionRepository;
     private final AuditLogService auditLogService;
+    private final com.neram.pos.repository.ModifierRepository modifierRepository;
 
     public List<RecipeDTO.RecipeResponse> getRecipesForMenuItem(Long menuItemId) {
         return recipeRepository.findByMenuItemId(menuItemId).stream()
@@ -173,27 +174,91 @@ public class RecipeService {
         }
     }
 
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
+
     /** Stock units the recipes need for the bill as it is now, per inventory item. */
     java.util.Map<Long, Double> desiredConsumption(Bill bill) {
         java.util.Map<Long, Double> out = new java.util.LinkedHashMap<>();
         if (bill.getItems() == null) return out;
         for (BillItem item : bill.getItems()) {
+            int qty = item.getQuantity() != null ? item.getQuantity() : 0;
+            if (qty <= 0) continue;
+
+            // 1. Dish recipe deduction
             Long dishId = menuItemIdOf(item);
-            if (dishId == null || item.getQuantity() == null || item.getQuantity() <= 0) continue;
-            for (Recipe recipe : recipeRepository.findByMenuItemIdAndActiveTrue(dishId)) {
-                InventoryItem inv = inventoryItemRepository.findById(recipe.getInventoryItemId()).orElse(null);
-                if (inv == null) continue;
-                // Items issued by hand (milk, oil...) are not reduced by sales: the recipe stays for costing only
-                if (Boolean.FALSE.equals(inv.getAutoDeduct())) continue;
+            if (dishId != null) {
+                deductDishRecipe(dishId, qty, bill, out);
+            }
+
+            // 2. Combo child dishes recipe deduction
+            if (item.getComboSnapshot() != null && !item.getComboSnapshot().isBlank()) {
                 try {
-                    BigDecimal qty = convertQuantity(recipe.getQuantityPerServing().multiply(BigDecimal.valueOf(item.getQuantity())), recipe.getUnit(), inv.getUnit());
-                    out.merge(inv.getId(), qty.doubleValue(), Double::sum);
-                } catch (IllegalArgumentException e) {
-                    log.warn("Recipe {} skipped for bill {}: {}", recipe.getId(), bill.getBillNumber(), e.getMessage());
+                    com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(item.getComboSnapshot());
+                    if (root.isArray()) {
+                        for (com.fasterxml.jackson.databind.JsonNode node : root) {
+                            Long childDishId = node.has("menuItemId") ? node.get("menuItemId").asLong() :
+                                    (node.has("menu_item_id") ? node.get("menu_item_id").asLong() : null);
+                            if (childDishId != null) {
+                                deductDishRecipe(childDishId, qty, bill, out);
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    log.warn("Failed to parse combo_snapshot for bill {}: {}", bill.getBillNumber(), e.getMessage());
+                }
+            }
+
+            // 3. Modifier stock deduction
+            if (item.getModifiersSnapshot() != null && !item.getModifiersSnapshot().isBlank()) {
+                try {
+                    com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(item.getModifiersSnapshot());
+                    if (root.isArray()) {
+                        for (com.fasterxml.jackson.databind.JsonNode node : root) {
+                            Long modId = node.has("modifier_id") ? node.get("modifier_id").asLong() :
+                                    (node.has("id") ? node.get("id").asLong() : null);
+                            Long invId = null;
+                            double invQty = 0.0;
+                            if (modId != null) {
+                                com.neram.pos.entity.Modifier mod = modifierRepository.findById(modId).orElse(null);
+                                if (mod != null) {
+                                    invId = mod.getInventoryItemId();
+                                    invQty = mod.getInventoryQuantity() != null ? mod.getInventoryQuantity().doubleValue() : 0.0;
+                                }
+                            }
+                            if (modId == null && invId == null) {
+                                invId = node.has("inventoryItemId") ? node.get("inventoryItemId").asLong() :
+                                        (node.has("inventory_item_id") ? node.get("inventory_item_id").asLong() : null);
+                                invQty = node.has("inventoryQuantity") ? node.get("inventoryQuantity").asDouble() :
+                                        (node.has("inventory_quantity") ? node.get("inventory_quantity").asDouble() : 0.0);
+                            }
+                            if (invId != null && invQty > 0) {
+                                InventoryItem inv = inventoryItemRepository.findById(invId).orElse(null);
+                                if (inv != null && !Boolean.FALSE.equals(inv.getAutoDeduct())) {
+                                    out.merge(inv.getId(), invQty * qty, Double::sum);
+                                }
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    log.warn("Failed to parse modifiers_snapshot for bill {}: {}", bill.getBillNumber(), e.getMessage());
                 }
             }
         }
         return out;
+    }
+
+    private void deductDishRecipe(Long dishId, int quantity, Bill bill, java.util.Map<Long, Double> out) {
+        for (Recipe recipe : recipeRepository.findByMenuItemIdAndActiveTrue(dishId)) {
+            InventoryItem inv = inventoryItemRepository.findById(recipe.getInventoryItemId()).orElse(null);
+            if (inv == null) continue;
+            if (Boolean.FALSE.equals(inv.getAutoDeduct())) continue;
+            try {
+                BigDecimal qty = convertQuantity(recipe.getQuantityPerServing().multiply(BigDecimal.valueOf(quantity)), recipe.getUnit(), inv.getUnit());
+                out.merge(inv.getId(), qty.doubleValue(), Double::sum);
+            } catch (IllegalArgumentException e) {
+                log.warn("Recipe {} skipped for bill {}: {}", recipe.getId(), bill.getBillNumber(), e.getMessage());
+            }
+        }
     }
 
     /** The dish of a bill line. A line without an id (an old bill) is matched by its name when exactly one dish has that name. */

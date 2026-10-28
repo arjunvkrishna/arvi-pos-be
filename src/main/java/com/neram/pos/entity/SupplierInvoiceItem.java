@@ -78,6 +78,9 @@ public class SupplierInvoiceItem {
     @Column(name = "expiry_date")
     private java.time.LocalDate expiryDate;
 
+    @Column(name = "batch_number", length = 50)
+    private String batchNumber;
+
     public double stockQty() {
         return stockQuantity != null ? stockQuantity : (quantity != null ? quantity : 0.0);
     }

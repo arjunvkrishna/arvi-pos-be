@@ -26,4 +26,12 @@ public interface BillItemRepository extends JpaRepository<BillItem, Long> {
            "GROUP BY bi.menuItemId, bi.itemName " +
            "ORDER BY SUM(bi.quantity) DESC")
     List<Object[]> findDishSalesBetween(@Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
+
+    @Query("SELECT bi.menuItemId, bi.itemName, SUM(bi.quantity), SUM(bi.subtotal) " +
+           "FROM BillItem bi JOIN bi.bill b " +
+           "WHERE b.businessDate BETWEEN :start AND :end AND b.deletedAt IS NULL " +
+           "AND b.status IN (com.neram.pos.entity.Bill.Status.PAID, com.neram.pos.entity.Bill.Status.PARTIALLY_REFUNDED) " +
+           "GROUP BY bi.menuItemId, bi.itemName " +
+           "ORDER BY SUM(bi.quantity) DESC")
+    List<Object[]> findDishSalesBetweenBusinessDates(@Param("start") java.time.LocalDate start, @Param("end") java.time.LocalDate end);
 }

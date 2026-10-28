@@ -131,6 +131,11 @@ public class PrinterSetting implements com.neram.pos.access.OutletScoped {
     @Builder.Default
     private String juiceKotCategoryIds = "";
 
+    // Wi-Fi names (comma-separated) on which the staff app prints straight to the LAN printers; empty = off
+    @Column(name = "direct_print_ssids", length = 255)
+    @Builder.Default
+    private String directPrintSsids = "";
+
     @Column(name = "logo_size")
     @Builder.Default
     private Integer logoSize = 130;
@@ -189,6 +194,7 @@ public class PrinterSetting implements com.neram.pos.access.OutletScoped {
         if (juiceKotSubheader == null || juiceKotSubheader.isBlank()) juiceKotSubheader = "NERAM - JUICE BAR";
         if (juiceKotFooterMessage == null || juiceKotFooterMessage.isBlank()) juiceKotFooterMessage = "--- END OF JUICE KOT ---";
         if (juiceKotCategoryIds == null) juiceKotCategoryIds = "";
+        if (directPrintSsids == null) directPrintSsids = "";
 
         if (autoCut == null) autoCut = true;
         if (paperWidthMm == null) paperWidthMm = 80;

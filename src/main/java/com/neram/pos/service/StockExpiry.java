@@ -19,10 +19,18 @@ public final class StockExpiry {
     public static final String OK = "OK";
 
     /** One delivery of an item: when it came, how many stock units, and its expiry date if the purchase line had one. */
-    public record Receipt(Long invoiceId, String invoiceNumber, LocalDate receivedOn, double stockQty, LocalDate expiry) {}
+    public record Receipt(Long invoiceId, String invoiceNumber, LocalDate receivedOn, double stockQty, LocalDate expiry, String batchNumber) {
+        public Receipt(Long invoiceId, String invoiceNumber, LocalDate receivedOn, double stockQty, LocalDate expiry) {
+            this(invoiceId, invoiceNumber, receivedOn, stockQty, expiry, null);
+        }
+    }
 
     /** Stock still on hand from one delivery, with its expiry. */
-    public record Batch(Long invoiceId, String invoiceNumber, LocalDate receivedOn, LocalDate expiry, double quantity, long daysLeft, String status) {}
+    public record Batch(Long invoiceId, String invoiceNumber, LocalDate receivedOn, LocalDate expiry, double quantity, long daysLeft, String status, String batchNumber) {
+        public Batch(Long invoiceId, String invoiceNumber, LocalDate receivedOn, LocalDate expiry, double quantity, long daysLeft, String status) {
+            this(invoiceId, invoiceNumber, receivedOn, expiry, quantity, daysLeft, status, null);
+        }
+    }
 
     /** The item's expiry picture: the earliest batch that matters, how much is affected, and the worst status. null status = nothing tracked. */
     public record Summary(LocalDate nextExpiry, String status, double affectedQuantity) {}
@@ -42,7 +50,7 @@ public final class StockExpiry {
             if (expiry == null && shelfLifeDays != null && shelfLifeDays > 0 && r.receivedOn() != null) expiry = r.receivedOn().plusDays(shelfLifeDays);
             if (expiry == null) continue;
             long days = ChronoUnit.DAYS.between(today, expiry);
-            out.add(new Batch(r.invoiceId(), r.invoiceNumber(), r.receivedOn(), expiry, StockUnits.round3(take), days, statusOf(days, warnDays)));
+            out.add(new Batch(r.invoiceId(), r.invoiceNumber(), r.receivedOn(), expiry, StockUnits.round3(take), days, statusOf(days, warnDays), r.batchNumber()));
         }
         out.sort(Comparator.comparing(Batch::expiry));
         return out;

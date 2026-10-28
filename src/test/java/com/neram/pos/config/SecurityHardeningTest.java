@@ -94,6 +94,29 @@ class SecurityHardeningTest {
     }
 
     @Test
+    @DisplayName("A deactivated account is locked out at once, even with an access token that has not expired")
+    void deactivatedAccountLosesAccessImmediately() throws Exception {
+        JwtTokenProvider provider = mock(JwtTokenProvider.class);
+        when(provider.validateToken("tok")).thenReturn(true);
+        when(provider.getIdentity("tok")).thenReturn(new JwtTokenProvider.TokenIdentity("gone", 5L, "bluedoor", false));
+        TenantRegistry registry = mock(TenantRegistry.class);
+        when(registry.findById(5L)).thenReturn(Optional.of(new TenantRecord(5, "bluedoor", "Blue", "ACTIVE", "PRO", 1,
+                null, null, null, "h", 5432, "db", "u", "e", "e", null, null, null, null)));
+        UserDetailsService uds = mock(UserDetailsService.class);
+        when(uds.loadUserByUsername("gone")).thenReturn(
+                new User("gone", "x", false, true, true, true, List.of(new SimpleGrantedAuthority("ROLE_MANAGER"))));
+
+        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/bills/active");
+        req.addHeader("Authorization", "Bearer tok");
+        FilterChain chain = mock(FilterChain.class);
+        new JwtAuthenticationFilter(provider, uds, registry, mock(PlatformAdminService.class),
+                mock(com.neram.pos.access.OutletScopeResolver.class)).doFilter(req, new MockHttpServletResponse(), chain);
+
+        assertNull(SecurityContextHolder.getContext().getAuthentication(), "a deactivated account must not be signed in");
+        verify(chain).doFilter(any(), any());
+    }
+
+    @Test
     @DisplayName("Exceptions without a message no longer crash the error handler")
     void nullMessageHandled() {
         GlobalExceptionHandler h = new GlobalExceptionHandler();

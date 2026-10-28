@@ -1,14 +1,14 @@
 package com.neram.pos.controller;
 
+import com.neram.pos.dto.NotificationDTO;
 import com.neram.pos.dto.NotificationSummaryDTO;
 import com.neram.pos.dto.StockAlertRequestDTO;
 import com.neram.pos.entity.InventoryItem;
-import com.neram.pos.entity.LeaveRequest;
 import com.neram.pos.entity.SystemNotification;
 import com.neram.pos.repository.InventoryItemRepository;
-import com.neram.pos.repository.LeaveRequestRepository;
 import com.neram.pos.repository.SystemNotificationRepository;
 import com.neram.pos.service.AuditLogService;
+import com.neram.pos.service.NotificationService;
 import com.neram.pos.service.NotificationStreamService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -29,7 +29,7 @@ import java.util.Map;
 public class NotificationController {
 
     private final SystemNotificationRepository notificationRepository;
-    private final LeaveRequestRepository leaveRequestRepository;
+    private final NotificationService notificationService;
     private final InventoryItemRepository inventoryItemRepository;
     private final AuditLogService auditLogService;
     private final NotificationStreamService notificationStreamService;
@@ -48,20 +48,11 @@ public class NotificationController {
                 .body(emitter);
     }
 
+    /** What this manager sees: their own unread state and what they have not cleared. */
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
-    public ResponseEntity<NotificationSummaryDTO> getNotifications() {
-        List<SystemNotification> list = notificationRepository.findTop50ByOrderByCreatedAtDesc();
-        long unread = notificationRepository.countByStatus(SystemNotification.Status.UNREAD);
-        long pendingLeaves = leaveRequestRepository.countByStatus(LeaveRequest.Status.PENDING);
-        long lowStockCount = notificationRepository.countByTypeAndStatus(SystemNotification.NotificationType.LOW_STOCK, SystemNotification.Status.UNREAD);
-
-        return ResponseEntity.ok(NotificationSummaryDTO.builder()
-                .unreadCount(unread)
-                .pendingLeavesCount(pendingLeaves)
-                .lowStockAlertsCount(lowStockCount)
-                .notifications(list)
-                .build());
+    public ResponseEntity<NotificationSummaryDTO> getNotifications(Authentication auth) {
+        return ResponseEntity.ok(notificationService.summary(auth.getName()));
     }
 
     @PostMapping("/stock-alert")
@@ -105,51 +96,32 @@ public class NotificationController {
 
     @PatchMapping("/{id}/read")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
-    public ResponseEntity<SystemNotification> markAsRead(@PathVariable Long id) {
-        SystemNotification notif = notificationRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Notification not found with id: " + id));
-        notif.setStatus(SystemNotification.Status.READ);
-        SystemNotification savedNotif = notificationRepository.save(notif);
-        notificationStreamService.publishChangedAfterCommit();
-        return ResponseEntity.ok(savedNotif);
+    public ResponseEntity<NotificationDTO> markAsRead(@PathVariable Long id, Authentication auth) {
+        return ResponseEntity.ok(notificationService.markRead(auth.getName(), id));
     }
 
     @PostMapping("/mark-all-read")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
-    public ResponseEntity<Void> markAllRead() {
-        List<SystemNotification> unread = notificationRepository.findByStatusOrderByCreatedAtDesc(SystemNotification.Status.UNREAD);
-        for (SystemNotification n : unread) {
-            n.setStatus(SystemNotification.Status.READ);
-        }
-        notificationRepository.saveAll(unread);
-        notificationStreamService.publishChangedAfterCommit();
+    public ResponseEntity<Void> markAllRead(Authentication auth) {
+        notificationService.markAllRead(auth.getName());
         return ResponseEntity.noContent().build();
     }
 
     /**
-     * Delete one notification (read or unread). Idempotent: deleting something another device already
-     * removed still returns 204, so a stale list never shows an error.
+     * Clear one notification from the caller's own list (read or unread). Other managers still have it.
+     * Idempotent: clearing something already gone still returns 204, so a stale list never shows an error.
      */
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
-    public ResponseEntity<Void> deleteNotification(@PathVariable Long id) {
-        notificationRepository.findById(id).ifPresent(n -> {
-            notificationRepository.delete(n);
-            auditLogService.log("DELETE_NOTIFICATION", "NOTIFICATION", id, n.getTitle(), null);
-        });
-        notificationStreamService.publishChangedAfterCommit();
+    public ResponseEntity<Void> deleteNotification(@PathVariable Long id, Authentication auth) {
+        notificationService.dismiss(auth.getName(), id);
         return ResponseEntity.noContent().build();
     }
 
-    /** Delete every notification that has already been marked read. Unread notifications are never touched. */
+    /** Clear everything the caller has already read from their own list. Unread notifications are never touched. */
     @DeleteMapping("/read")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
-    public ResponseEntity<Map<String, Integer>> deleteReadNotifications() {
-        int deleted = notificationRepository.deleteAllByStatus(SystemNotification.Status.READ);
-        if (deleted > 0) {
-            auditLogService.log("DELETE_READ_NOTIFICATIONS", "NOTIFICATION", null, null, "Deleted " + deleted + " read notification(s)");
-        }
-        notificationStreamService.publishChangedAfterCommit();
-        return ResponseEntity.ok(Map.of("deleted", deleted));
+    public ResponseEntity<Map<String, Integer>> deleteReadNotifications(Authentication auth) {
+        return ResponseEntity.ok(Map.of("deleted", notificationService.dismissRead(auth.getName())));
     }
 }

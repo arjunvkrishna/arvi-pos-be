@@ -1,5 +1,6 @@
 package com.neram.pos.service;
 
+import com.neram.pos.access.AccessPolicy;
 import com.neram.pos.dto.EmployeeDTO;
 import com.neram.pos.dto.EmployeeRequestDTO;
 import com.neram.pos.entity.Employee;
@@ -7,12 +8,14 @@ import com.neram.pos.entity.User;
 import com.neram.pos.repository.EmployeeRepository;
 import com.neram.pos.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -25,33 +28,60 @@ public class EmployeeService {
     private final PasswordEncoder passwordEncoder;
     private final AuditLogService auditLogService;
 
-    public List<EmployeeDTO> getAllEmployees(String callerRole) {
-        if ("ADMIN".equalsIgnoreCase(callerRole)) {
-            // Admin sees all users/employees
-            return employeeRepository.findByActiveTrue()
-                    .stream()
-                    .map(this::toDTO)
-                    .collect(Collectors.toList());
-        } else if ("MANAGER".equalsIgnoreCase(callerRole)) {
-            // Manager can see other managers and staff (excluding ADMIN)
-            return employeeRepository.findByActiveTrue()
-                    .stream()
-                    .filter(emp -> emp.getRole() != Employee.Role.ADMIN)
-                    .map(this::toDTO)
-                    .collect(Collectors.toList());
-        } else {
-            // Regular employees only see staff
-            return employeeRepository.findByRoleAndActiveTrue(Employee.Role.EMPLOYEE)
-                    .stream()
-                    .map(this::toDTO)
-                    .collect(Collectors.toList());
+    // ---- Chain of command (the same rule UserService applies to login accounts, see AccessPolicy) ----
+
+    /** The caller's real role. Anything unrecognised is the lowest tier: unknown never means more access. */
+    static User.Role callerOf(String callerRole) {
+        if (callerRole == null) return User.Role.EMPLOYEE;
+        try {
+            return User.Role.valueOf(callerRole.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return User.Role.EMPLOYEE;
         }
+    }
+
+    private static User.Role asUserRole(Employee.Role role) {
+        return User.Role.valueOf(role.name());
+    }
+
+    /** May the caller create, change or deactivate someone of this role? Only people strictly below them; owners may add owners. */
+    static boolean outranks(User.Role caller, Employee.Role target) {
+        return outranks(caller, asUserRole(target));
+    }
+
+    static boolean outranks(User.Role caller, User.Role target) {
+        return AccessPolicy.rank(caller) > AccessPolicy.rank(target) || (AccessPolicy.isOwner(caller) && AccessPolicy.isOwner(target));
+    }
+
+    /** Management sees everyone up to their own tier; anyone else sees plain staff only. */
+    static boolean canSee(User.Role caller, Employee.Role target) {
+        if (!AccessPolicy.isManagement(caller)) return target == Employee.Role.EMPLOYEE;
+        return AccessPolicy.rank(asUserRole(target)) <= AccessPolicy.rank(caller);
+    }
+
+    private static List<Employee.Role> visibleRoles(User.Role caller) {
+        return Arrays.stream(Employee.Role.values()).filter(r -> canSee(caller, r)).toList();
+    }
+
+    private static void requireOutranks(User.Role caller, Employee.Role target, String doing) {
+        if (!outranks(caller, target)) {
+            throw new AccessDeniedException("Access denied: you cannot " + doing + " someone at or above your own role.");
+        }
+    }
+
+    public List<EmployeeDTO> getAllEmployees(String callerRole) {
+        User.Role caller = callerOf(callerRole);
+        return employeeRepository.findByActiveTrue()
+                .stream()
+                .filter(emp -> canSee(caller, emp.getRole()))
+                .map(this::toDTO)
+                .collect(Collectors.toList());
     }
 
     public List<EmployeeDTO> getEmployeesByRole(String roleStr, String callerRole) {
         Employee.Role role = Employee.Role.valueOf(roleStr.toUpperCase());
-        if ("MANAGER".equalsIgnoreCase(callerRole) && role == Employee.Role.ADMIN) {
-            throw new RuntimeException("Access denied: Managers cannot view Admin accounts");
+        if (!canSee(callerOf(callerRole), role)) {
+            throw new AccessDeniedException("Access denied: you cannot view accounts above your own role.");
         }
         return employeeRepository.findByRoleAndActiveTrue(role)
                 .stream()
@@ -62,22 +92,18 @@ public class EmployeeService {
     /** One page of {@link #getAllEmployees(String)} (same visibility rules), ordered by id. */
     public org.springframework.data.domain.Page<EmployeeDTO> getAllEmployees(String callerRole, org.springframework.data.domain.Pageable pageable) {
         org.springframework.data.domain.Pageable sorted = com.neram.pos.util.PagedResponse.withSort(pageable, org.springframework.data.domain.Sort.by("id"));
-        org.springframework.data.domain.Page<Employee> page;
-        if ("ADMIN".equalsIgnoreCase(callerRole)) {
-            page = employeeRepository.findByActiveTrue(sorted);
-        } else if ("MANAGER".equalsIgnoreCase(callerRole)) {
-            page = employeeRepository.findByActiveTrueAndRoleNot(Employee.Role.ADMIN, sorted);
-        } else {
-            page = employeeRepository.findByRoleAndActiveTrue(Employee.Role.EMPLOYEE, sorted);
-        }
+        User.Role caller = callerOf(callerRole);
+        org.springframework.data.domain.Page<Employee> page = AccessPolicy.isOwner(caller)
+                ? employeeRepository.findByActiveTrue(sorted)
+                : employeeRepository.findByActiveTrueAndRoleIn(visibleRoles(caller), sorted);
         return page.map(this::toDTO);
     }
 
     /** One page of {@link #getEmployeesByRole(String, String)}, ordered by id. */
     public org.springframework.data.domain.Page<EmployeeDTO> getEmployeesByRole(String roleStr, String callerRole, org.springframework.data.domain.Pageable pageable) {
         Employee.Role role = Employee.Role.valueOf(roleStr.toUpperCase());
-        if ("MANAGER".equalsIgnoreCase(callerRole) && role == Employee.Role.ADMIN) {
-            throw new RuntimeException("Access denied: Managers cannot view Admin accounts");
+        if (!canSee(callerOf(callerRole), role)) {
+            throw new AccessDeniedException("Access denied: you cannot view accounts above your own role.");
         }
         return employeeRepository.findByRoleAndActiveTrue(role, com.neram.pos.util.PagedResponse.withSort(pageable, org.springframework.data.domain.Sort.by("id")))
                 .map(this::toDTO);
@@ -86,8 +112,8 @@ public class EmployeeService {
     public EmployeeDTO getEmployeeById(Long id, String callerRole) {
         Employee emp = employeeRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Employee not found with id: " + id));
-        if ("MANAGER".equalsIgnoreCase(callerRole) && emp.getRole() == Employee.Role.ADMIN) {
-            throw new RuntimeException("Access denied: Managers cannot view Admin accounts");
+        if (!canSee(callerOf(callerRole), emp.getRole())) {
+            throw new AccessDeniedException("Access denied: you cannot view accounts above your own role.");
         }
         return toDTO(emp);
     }
@@ -95,9 +121,7 @@ public class EmployeeService {
     @Transactional
     public EmployeeDTO createEmployee(EmployeeRequestDTO dto, String creatorRole) {
         Employee.Role targetRole = Employee.Role.valueOf(dto.getRole().toUpperCase());
-        if ("MANAGER".equalsIgnoreCase(creatorRole) && targetRole != Employee.Role.EMPLOYEE) {
-            throw new RuntimeException("Access denied: Managers can only create Staff/Employee accounts. Only Admin can create Manager or Admin accounts.");
-        }
+        requireOutranks(callerOf(creatorRole), targetRole, "create");
 
         Employee emp = new Employee();
         emp.setName(dto.getName());
@@ -133,6 +157,7 @@ public class EmployeeService {
                 user.setPasswordHash(passwordEncoder.encode(dto.getPassword()));
                 user.setRole(User.Role.valueOf(targetRole.name()));
                 user.setEmployeeId(saved.getId());
+                user.setOutletId(saved.getOutletId());
                 user.setMustChangePassword(true);
                 user.setActive(true);
                 userRepository.save(user);
@@ -148,9 +173,8 @@ public class EmployeeService {
         Employee emp = employeeRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Employee not found with id: " + id));
 
-        if ("MANAGER".equalsIgnoreCase(updaterRole) && emp.getRole() != Employee.Role.EMPLOYEE) {
-            throw new RuntimeException("Access denied: Managers can only modify Staff/Employee accounts");
-        }
+        User.Role updater = callerOf(updaterRole);
+        requireOutranks(updater, emp.getRole(), "change");
 
         String oldValue = emp.toString();
         if (dto.getName() != null && !dto.getName().isBlank()) {
@@ -164,9 +188,7 @@ public class EmployeeService {
         }
         if (dto.getRole() != null) {
             Employee.Role newRole = Employee.Role.valueOf(dto.getRole().toUpperCase());
-            if ("MANAGER".equalsIgnoreCase(updaterRole) && newRole != Employee.Role.EMPLOYEE) {
-                throw new RuntimeException("Access denied: Managers cannot elevate roles to Manager or Admin");
-            }
+            requireOutranks(updater, newRole, "promote anyone to");
             emp.setRole(newRole);
         }
         if (dto.getDepartment() != null) emp.setDepartment(dto.getDepartment());
@@ -195,9 +217,14 @@ public class EmployeeService {
         Employee emp = employeeRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Employee not found with id: " + id));
 
-        if ("MANAGER".equalsIgnoreCase(deleterRole) && emp.getRole() != Employee.Role.EMPLOYEE) {
-            throw new RuntimeException("Access denied: Managers can only deactivate Staff/Employee accounts");
-        }
+        User.Role deleter = callerOf(deleterRole);
+        requireOutranks(deleter, emp.getRole(), "deactivate");
+        // Deactivating the employee also switches off the login linked to it: that login's own role must be below the caller's too.
+        userRepository.findByEmployeeId(id).ifPresent(u -> {
+            if (!outranks(deleter, u.getRole())) {
+                throw new AccessDeniedException("Access denied: you cannot deactivate someone at or above your own role.");
+            }
+        });
 
         emp.setActive(false);
         emp.setUpdatedAt(LocalDateTime.now());

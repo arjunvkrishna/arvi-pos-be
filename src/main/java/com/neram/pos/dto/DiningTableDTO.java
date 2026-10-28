@@ -14,6 +14,7 @@ import java.time.LocalDateTime;
 public class DiningTableDTO {
     private Long id;
     private String name;
+    private String floor;
     private Boolean active;
     private Integer displayOrder;
     private LocalDateTime createdAt;

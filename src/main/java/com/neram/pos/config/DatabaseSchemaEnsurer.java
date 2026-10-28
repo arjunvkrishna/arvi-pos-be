@@ -18,6 +18,7 @@ public class DatabaseSchemaEnsurer {
     private final JdbcTemplate jdbcTemplate;
 
     public synchronized void ensureSchema() {
+        if (!JobMode.interactive()) { log.info("Headless worker: skipping {}", getClass().getSimpleName()); return; }
         log.info("Ensuring database schema integrity for printer settings and KOT columns...");
 
         // Ensure printer_settings table exists
@@ -43,7 +44,7 @@ public class DatabaseSchemaEnsurer {
         executeSqlSafe("ALTER TABLE promotions ADD COLUMN IF NOT EXISTS days_of_week VARCHAR(20)");
         executeSqlSafe("ALTER TABLE promotions ADD COLUMN IF NOT EXISTS daily_start TIME");
         executeSqlSafe("ALTER TABLE promotions ADD COLUMN IF NOT EXISTS daily_end TIME");
-        executeSqlSafe("CREATE TABLE IF NOT EXISTS bill_payments (id BIGSERIAL PRIMARY KEY, bill_id BIGINT NOT NULL REFERENCES bills(id) ON DELETE CASCADE, mode VARCHAR(10) NOT NULL, amount NUMERIC(12,2) NOT NULL, reference VARCHAR(100), created_at TIMESTAMP NOT NULL DEFAULT NOW())");
+        executeSqlSafe("CREATE TABLE IF NOT EXISTS bill_payments (id BIGSERIAL PRIMARY KEY, bill_id BIGINT NOT NULL REFERENCES bills(id) ON DELETE CASCADE, mode VARCHAR(20) NOT NULL, amount NUMERIC(12,2) NOT NULL, reference VARCHAR(100), created_at TIMESTAMP NOT NULL DEFAULT NOW())");
         executeSqlSafe("ALTER TABLE bills ADD COLUMN IF NOT EXISTS payment_summary VARCHAR(150)");
         executeSqlSafe("CREATE TABLE IF NOT EXISTS idempotency_keys (idem_key VARCHAR(80) PRIMARY KEY, bill_id BIGINT NOT NULL, created_at TIMESTAMP NOT NULL DEFAULT NOW())");
         executeSqlSafe("ALTER TABLE bills ADD COLUMN IF NOT EXISTS tip_amount NUMERIC(12,2) NOT NULL DEFAULT 0");
@@ -67,6 +68,12 @@ public class DatabaseSchemaEnsurer {
         executeSqlSafe("ALTER TABLE printer_settings ADD COLUMN IF NOT EXISTS juice_kot_subheader VARCHAR(500) NOT NULL DEFAULT 'NERAM - JUICE BAR'");
         executeSqlSafe("ALTER TABLE printer_settings ADD COLUMN IF NOT EXISTS juice_kot_footer_message VARCHAR(150) NOT NULL DEFAULT '--- END OF JUICE KOT ---'");
         executeSqlSafe("ALTER TABLE printer_settings ADD COLUMN IF NOT EXISTS juice_kot_category_ids VARCHAR(1000) NOT NULL DEFAULT ''");
+        executeSqlSafe("ALTER TABLE printer_settings ADD COLUMN IF NOT EXISTS direct_print_ssids VARCHAR(255) NOT NULL DEFAULT ''");
+        executeSqlSafe("ALTER TABLE bill_payments ALTER COLUMN mode TYPE VARCHAR(20)");
+        executeSqlSafe("ALTER TABLE customers ADD COLUMN IF NOT EXISTS points_expire_at DATE");
+        executeSqlSafe("CREATE TABLE IF NOT EXISTS loyalty_settings (id BIGINT PRIMARY KEY, expiry_days INT NOT NULL DEFAULT 180, min_redeem_points INT NOT NULL DEFAULT 100, updated_at TIMESTAMPTZ, updated_by_name VARCHAR(100))");
+        executeSqlSafe("INSERT INTO loyalty_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING");
+        executeSqlSafe("CREATE TABLE IF NOT EXISTS notification_user_state (id BIGSERIAL PRIMARY KEY, notification_id BIGINT NOT NULL REFERENCES system_notifications(id) ON DELETE CASCADE, user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE, read_at TIMESTAMPTZ, dismissed_at TIMESTAMPTZ, CONSTRAINT uq_notification_user UNIQUE (notification_id, user_id))");
 
         // Quoted columns for printer_settings in case hibernate quotes identifiers
         executeSqlSafe("ALTER TABLE \"printer_settings\" ADD COLUMN IF NOT EXISTS \"bill_host\" VARCHAR(100) NOT NULL DEFAULT '192.168.1.37'");

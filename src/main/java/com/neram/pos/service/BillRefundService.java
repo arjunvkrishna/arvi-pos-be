@@ -31,6 +31,9 @@ public class BillRefundService {
     private final UserRepository userRepository;
     private final CashierShiftService cashierShiftService;
     private final AuditLogService auditLogService;
+    private final GiftCardService giftCardService;
+    private final CustomerService customerService;
+    private final CouponService couponService;
 
     @Transactional
     public BillRefundDTO.RefundResponse processRefund(Long billId, BillRefundDTO.RefundRequest req) {
@@ -55,14 +58,6 @@ public class BillRefundService {
             }
         }
 
-        if (req.getAmount() == null || req.getAmount().compareTo(BigDecimal.ZERO) <= 0) {
-            throw new IllegalArgumentException("Refund amount must be greater than zero.");
-        }
-        if (req.getReason() == null || req.getReason().trim().isEmpty()) {
-            throw new IllegalArgumentException("A valid reason is required for refunds.");
-        }
-
-        BigDecimal refundAmt = req.getAmount().setScale(2, RoundingMode.HALF_UP);
         BigDecimal originalNet = bill.getNetAmount() != null ? bill.getNetAmount() : BigDecimal.ZERO;
 
         // Compute successful refunds already recorded
@@ -73,6 +68,18 @@ public class BillRefundService {
                 .setScale(2, RoundingMode.HALF_UP);
 
         BigDecimal remainingRefundable = originalNet.subtract(totalRefundedSoFar).setScale(2, RoundingMode.HALF_UP);
+
+        if (req.getAmount() == null || req.getAmount().compareTo(BigDecimal.ZERO) <= 0) {
+            if (remainingRefundable.compareTo(BigDecimal.ZERO) <= 0) {
+                throw new IllegalArgumentException("Bill has no remaining refundable balance.");
+            }
+            req.setAmount(remainingRefundable);
+        }
+        if (req.getReason() == null || req.getReason().trim().isEmpty()) {
+            throw new IllegalArgumentException("A valid reason is required for refunds.");
+        }
+
+        BigDecimal refundAmt = req.getAmount().setScale(2, RoundingMode.HALF_UP);
 
         if (refundAmt.compareTo(remainingRefundable) > 0) {
             throw new IllegalArgumentException(String.format(
@@ -109,6 +116,9 @@ public class BillRefundService {
         BigDecimal newRemaining = remainingRefundable.subtract(refundAmt).setScale(2, RoundingMode.HALF_UP);
         if (newRemaining.compareTo(BigDecimal.ZERO) == 0) {
             bill.setStatus(Bill.Status.REFUNDED);
+            giftCardService.refundForBill(bill.getId());
+            customerService.reversePointsForBill(bill.getId());
+            couponService.revertCouponForBill(bill.getId());
         } else {
             bill.setStatus(Bill.Status.PARTIALLY_REFUNDED);
         }

@@ -79,6 +79,10 @@ public class ThermalPrinterService {
         this.brandingService = brandingService;
     }
 
+    /** Optional: tests build this service without one. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private AuditLogService auditLogService;
+
     private final PrinterSettingRepository printerSettingRepository;
     private final BillRepository billRepository;
     private final PrintJobRepository printJobRepository;
@@ -125,7 +129,7 @@ public class ThermalPrinterService {
     @Value("${neram.printer.juice-kot-enabled:#{null}}")
     private Boolean envJuiceKotEnabled;
 
-    @Value("${neram.printer.bridge-token:neram-printer-bridge-secret-2024}")
+    @Value("${neram.printer.bridge-token:}")
     private String configuredBridgeToken;
 
     /**
@@ -402,6 +406,7 @@ public class ThermalPrinterService {
                 .juiceKotSubheader(s.getJuiceKotSubheader())
                 .juiceKotFooterMessage(s.getJuiceKotFooterMessage())
                 .juiceKotCategoryIds(s.getJuiceKotCategoryIds() != null ? s.getJuiceKotCategoryIds() : "")
+                .directPrintSsids(s.getDirectPrintSsids() != null ? s.getDirectPrintSsids() : "")
                 .logoSize(s.getLogoSize() != null && s.getLogoSize() > 0 ? s.getLogoSize() : 130)
                 .logoGap(s.getLogoGap() != null && s.getLogoGap() >= 0 ? s.getLogoGap() : 2)
                 .lineSpacing(s.getLineSpacing() != null && s.getLineSpacing() > 0 ? s.getLineSpacing() : 24)
@@ -411,6 +416,28 @@ public class ThermalPrinterService {
                 .printStyle(s.getPrintStyle() != null && !s.getPrintStyle().isBlank() ? s.getPrintStyle() : "CRISP_DARK")
                 .updatedAt(s.getUpdatedAt())
                 .build();
+    }
+
+    /** Saves printer settings. The cafe Wi-Fi for direct printing is an admin decision: anyone else may resend the current value, not change it. */
+    public PrinterSettingDTO updateSettings(PrinterSettingDTO dto, boolean isAdmin) {
+        String before = DevicePrintScope.cleanSsidList(getSettings().getDirectPrintSsids());
+        boolean sent = dto.getDirectPrintSsids() != null;
+        String after = sent ? DevicePrintScope.cleanSsidList(dto.getDirectPrintSsids()) : before;
+        boolean changing = sent && !after.equals(before);
+        if (changing && !isAdmin) {
+            audit("PRINTER_WIFI_CHANGE_DENIED", before, after);
+            throw new org.springframework.security.access.AccessDeniedException("Only an admin can change the cafe Wi-Fi used for direct printing.");
+        }
+        PrinterSettingDTO saved = updateSettings(dto);
+        if (changing) audit("PRINTER_WIFI_CHANGED", before, after);
+        return saved;
+    }
+
+    /** The audit log is a record, never a reason for a setting not to save. */
+    private void audit(String action, String oldValue, String newValue) {
+        if (auditLogService == null) return;
+        try { auditLogService.log(action, "PRINTER_SETTING", 1L, oldValue, newValue); }
+        catch (Exception e) { log.warn("Could not write audit entry {}: {}", action, e.getMessage()); }
     }
 
     @Transactional
@@ -478,6 +505,7 @@ public class ThermalPrinterService {
         if (dto.getJuiceKotSubheader() != null) s.setJuiceKotSubheader(dto.getJuiceKotSubheader().trim());
         if (dto.getJuiceKotFooterMessage() != null) s.setJuiceKotFooterMessage(dto.getJuiceKotFooterMessage().trim());
         if (dto.getJuiceKotCategoryIds() != null) s.setJuiceKotCategoryIds(dto.getJuiceKotCategoryIds().trim());
+        if (dto.getDirectPrintSsids() != null) s.setDirectPrintSsids(DevicePrintScope.cleanSsidList(dto.getDirectPrintSsids()));
 
         boolean logoSettingsChanged = false;
         if (dto.getLogoSize() != null && dto.getLogoSize() > 0 && !dto.getLogoSize().equals(s.getLogoSize())) {
@@ -925,6 +953,7 @@ public class ThermalPrinterService {
                         itemName = itemName + " (Parcel)";
                     }
                     buffer.write(formatItemRow(itemName, q, item.getPrice(), item.getSubtotal()).getBytes(StandardCharsets.UTF_8));
+                    printItemSnapshots(buffer, item.getModifiersSnapshot(), item.getComboSnapshot());
                 }
             }
 
@@ -1309,6 +1338,7 @@ public class ThermalPrinterService {
             if (item.getCustomization() != null && !item.getCustomization().trim().isBlank()) {
                 buffer.write(("  * NOTE: " + item.getCustomization().trim() + "\n").getBytes(StandardCharsets.UTF_8));
             }
+            printItemSnapshots(buffer, item.getModifiersSnapshot(), item.getComboSnapshot());
             if (Boolean.TRUE.equals(item.getIsTakeaway()) || isTakeaway) {
                 buffer.write(("  *** [PARCEL / TAKEAWAY PACK] ***\n").getBytes(StandardCharsets.UTF_8));
             }
@@ -2064,6 +2094,8 @@ public class ThermalPrinterService {
 
     private PrintResultDTO dispatchPrintJob(String host, int port, byte[] data, String printType, Long billId, String billNumber, String idempotencyKey) {
         String jobId = UUID.randomUUID().toString();
+        DevicePrintScope device = DevicePrintScope.current();
+        LocalDateTime now = LocalDateTime.now();
         PrintJob job = PrintJob.builder()
                 .jobId(jobId)
                 .billId(billId)
@@ -2072,15 +2104,36 @@ public class ThermalPrinterService {
                 .targetPrinterHost(host)
                 .targetPrinterPort(port)
                 .payload(data)
-                .status(PrintJobStatus.PENDING)
-                .attemptCount(0)
+                .status(device != null ? PrintJobStatus.CLAIMED : PrintJobStatus.PENDING)
+                .attemptCount(device != null ? 1 : 0)
+                .claimedByBridgeId(device != null ? device.deviceId() : null)
+                .claimedAt(device != null ? now : null)
+                .leaseExpiresAt(device != null ? now.plusSeconds(DevicePrintScope.LEASE_SECONDS) : null)
                 .idempotencyKey(idempotencyKey)
-                .createdAt(LocalDateTime.now())
-                .updatedAt(LocalDateTime.now())
-                .nextEligibleAt(LocalDateTime.now())
+                .createdAt(now)
+                .updatedAt(now)
+                .nextEligibleAt(now)
                 .build();
 
         PrintJob persistedJob = printBridgeService.enqueuePrintJob(job);
+
+        // The phone prints this one itself. If the job already existed (a repeated tap) it is not ours to hand out, so it
+        // falls through to the normal queued answer below.
+        if (device != null && persistedJob.getStatus() == PrintJobStatus.CLAIMED
+                && device.deviceId().equals(persistedJob.getClaimedByBridgeId()) && persistedJob.getPayload() != null) {
+            device.add(com.neram.pos.dto.DevicePrintJobDTO.builder()
+                    .jobId(persistedJob.getJobId()).printType(printType).host(host).port(port)
+                    .dataBase64(java.util.Base64.getEncoder().encodeToString(persistedJob.getPayload())).build());
+            return PrintResultDTO.builder()
+                    .success(true)
+                    .message(String.format("Ready to print from this device to %s:%d", host, port))
+                    .host(host).port(port).billId(billId).billNumber(billNumber).printType(printType)
+                    .jobId(persistedJob.getJobId())
+                    .status(persistedJob.getStatus().name())
+                    .attemptCount(persistedJob.getAttemptCount())
+                    .printedAt(LocalDateTime.now())
+                    .build();
+        }
 
         // All print jobs must go through the ESP32 hardware bridge (no direct socket from backend)
         if (!directPrintEnabled || printBridgeService.isBridgeOnline() || (configuredBridgeToken != null && !configuredBridgeToken.isBlank())) {
@@ -2457,5 +2510,43 @@ public class ThermalPrinterService {
             result.append(currentLine).append("\n");
         }
         return result.toString();
+    }
+
+    private void printItemSnapshots(ByteArrayOutputStream buffer, String modifiersSnapshot, String comboSnapshot) {
+        if (modifiersSnapshot != null && !modifiersSnapshot.isBlank()) {
+            try {
+                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                com.fasterxml.jackson.databind.JsonNode root = mapper.readTree(modifiersSnapshot);
+                if (root.isArray()) {
+                    for (com.fasterxml.jackson.databind.JsonNode node : root) {
+                        String name = node.has("name") ? node.get("name").asText() : "";
+                        double price = node.has("priceAdjustment") ? node.get("priceAdjustment").asDouble() :
+                                (node.has("price") ? node.get("price").asDouble() : 0.0);
+                        if (!name.isBlank()) {
+                            String priceStr = price > 0.001 ? String.format(" (+Rs. %.2f)", price) : "";
+                            buffer.write(("  + " + name + priceStr + "\n").getBytes(StandardCharsets.UTF_8));
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+        if (comboSnapshot != null && !comboSnapshot.isBlank()) {
+            try {
+                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                com.fasterxml.jackson.databind.JsonNode root = mapper.readTree(comboSnapshot);
+                if (root.isArray()) {
+                    for (com.fasterxml.jackson.databind.JsonNode node : root) {
+                        String dishName = node.has("dishName") ? node.get("dishName").asText() :
+                                (node.has("dish_name") ? node.get("dish_name").asText() : "");
+                        double extra = node.has("extraPrice") ? node.get("extraPrice").asDouble() :
+                                (node.has("extra_price") ? node.get("extra_price").asDouble() : 0.0);
+                        if (!dishName.isBlank()) {
+                            String extraStr = extra > 0.001 ? String.format(" (+Rs. %.2f)", extra) : "";
+                            buffer.write(("  + " + dishName + extraStr + "\n").getBytes(StandardCharsets.UTF_8));
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
     }
 }

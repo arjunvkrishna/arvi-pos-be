@@ -136,6 +136,7 @@ public class RefreshTokenService {
     /** Keeps the table small: removes expired tokens and revoked tokens older than a week. Run per cafe by RefreshTokenCleanupJob. */
     @Transactional
     public void purgeStale() {
+        if (!com.neram.pos.config.JobMode.interactive()) return;
         int removed = refreshTokenRepository.deleteStale(LocalDateTime.now().minusDays(7));
         if (removed > 0) {
             log.info("Purged {} stale refresh token(s)", removed);

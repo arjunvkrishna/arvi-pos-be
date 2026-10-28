@@ -5,6 +5,8 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Data
 @NoArgsConstructor
@@ -44,6 +46,14 @@ public class BillItem {
 
     @Column(name = "customization", length = 500)
     private String customization;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "modifiers_snapshot", columnDefinition = "jsonb")
+    private String modifiersSnapshot;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "combo_snapshot", columnDefinition = "jsonb")
+    private String comboSnapshot;
 
     @Column(name = "is_takeaway", nullable = false)
     private Boolean isTakeaway = false;

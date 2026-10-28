@@ -24,6 +24,7 @@ public class TelegramPollingService {
 
     @Scheduled(fixedDelay = 4000, initialDelay = 10000)
     public void pollTelegramUpdates() {
+        if (!com.neram.pos.config.JobMode.interactive()) return;
         if (!botClient.isConfigured() || webhookActive) {
             return;
         }

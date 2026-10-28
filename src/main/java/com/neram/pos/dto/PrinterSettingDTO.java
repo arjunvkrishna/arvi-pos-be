@@ -46,6 +46,8 @@ public class PrinterSettingDTO {
     private String juiceKotSubheader;
     private String juiceKotFooterMessage;
     private String juiceKotCategoryIds;
+    /** Wi-Fi names (comma-separated) on which the staff app prints directly to the LAN printers; empty = off. */
+    private String directPrintSsids;
     private Integer logoSize;
     private Integer logoGap;
     private Integer lineSpacing;

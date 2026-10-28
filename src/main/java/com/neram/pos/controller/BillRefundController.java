@@ -32,6 +32,7 @@ public class BillRefundController {
     }
 
     @GetMapping("/bills/{id}/refunds")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
     public ResponseEntity<List<BillRefundDTO.RefundResponse>> getRefundsForBill(@PathVariable Long id) {
         return ResponseEntity.ok(refundService.getRefundsForBill(id));
     }

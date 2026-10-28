@@ -92,7 +92,7 @@ public class InventoryService {
         for (SupplierInvoiceItem l : lines) {
             SupplierInvoice inv = invoices.get(l.getInvoiceId());
             out.computeIfAbsent(l.getInventoryItemId(), k -> new ArrayList<>())
-                    .add(new StockExpiry.Receipt(l.getInvoiceId(), inv != null ? inv.getInvoiceNumber() : null, inv != null ? inv.getInvoiceDate() : null, l.stockQty(), l.getExpiryDate()));
+                    .add(new StockExpiry.Receipt(l.getInvoiceId(), inv != null ? inv.getInvoiceNumber() : null, inv != null ? inv.getInvoiceDate() : null, l.stockQty(), l.getExpiryDate(), l.getBatchNumber()));
         }
         return out;
     }
@@ -108,7 +108,7 @@ public class InventoryService {
                 if (!all && StockExpiry.OK.equals(b.status())) continue;
                 out.add(ExpiryBatchDTO.builder().itemId(i.getId()).itemName(i.getName()).unit(i.getUnit()).packName(i.getPackName()).packSize(i.getPackSize())
                         .expiryDate(b.expiry()).quantity(b.quantity()).daysLeft(b.daysLeft()).status(b.status())
-                        .invoiceId(b.invoiceId()).invoiceNumber(b.invoiceNumber()).receivedOn(b.receivedOn()).build());
+                        .invoiceId(b.invoiceId()).invoiceNumber(b.invoiceNumber()).receivedOn(b.receivedOn()).batchNumber(b.batchNumber()).build());
             }
         }
         out.sort(java.util.Comparator.comparing(ExpiryBatchDTO::getExpiryDate).thenComparing(ExpiryBatchDTO::getItemName));
@@ -167,8 +167,11 @@ public class InventoryService {
             }
             return cb.and(p.toArray(new jakarta.persistence.criteria.Predicate[0]));
         };
-        return inventoryItemRepository.findAll(spec, com.neram.pos.util.PagedResponse.withSort(pageable, org.springframework.data.domain.Sort.by("id")))
-                .map(this::toDTO);
+        org.springframework.data.domain.Page<InventoryItem> page = inventoryItemRepository.findAll(spec, com.neram.pos.util.PagedResponse.withSort(pageable, org.springframework.data.domain.Sort.by("id")));
+        // Expiry badges need the deliveries of the items on this page
+        Map<Long, List<StockExpiry.Receipt>> receipts = receiptsFor(page.getContent().stream().map(InventoryItem::getId).collect(Collectors.toList()));
+        LocalDate today = LocalDate.now();
+        return page.map(i -> toDTO(i, receipts.getOrDefault(i.getId(), Collections.emptyList()), today));
     }
 
     public List<InventoryItemDTO> getLowStockItems() {
@@ -600,6 +603,7 @@ public class InventoryService {
                 .unit(item.getUnit())
                 .quantity(item.getQuantity())
                 .minQuantity(item.getMinQuantity())
+                .reorderLevel(item.getReorderLevel() != null ? item.getReorderLevel() : BigDecimal.ZERO)
                 .costPerUnit(item.getCostPerUnit())
                 .unitVolume(unitVol)
                 .volume(unitVol)

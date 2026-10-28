@@ -59,11 +59,8 @@ public class EmployeeController {
         return ResponseEntity.noContent().build();
     }
 
+    /** The caller's actual role (e.g. GENERAL_MANAGER), read from the signed-in user; unknown is the lowest tier. */
     private String getRoleFromAuth(Authentication auth) {
-        if (auth == null) return "ADMIN";
-        return auth.getAuthorities().stream()
-                .map(a -> a.getAuthority().replace("ROLE_", ""))
-                .findFirst()
-                .orElse("ADMIN");
+        return com.neram.pos.service.PayrollAccess.callerRole(auth).name();
     }
 }

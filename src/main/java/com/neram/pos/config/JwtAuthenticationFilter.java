@@ -105,6 +105,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 TenantContext.set(tenant.get().info());
                 MDC.put("tenant", tenant.get().code());
                 userDetails = userDetailsService.loadUserByUsername(identity.username());
+                if (!userDetails.isEnabled()) {
+                    // A deactivated account loses access at once, not when its access token happens to expire.
+                    return true; // unauthenticated; the entry point answers 401
+                }
                 if (isPasswordChangePending(userDetails) && !isAllowedWhilePasswordChangePending(request)) {
                     writeJson(response, HttpServletResponse.SC_FORBIDDEN,
                             "{\"error\":\"Password change required. Please set a new password before continuing.\"}");

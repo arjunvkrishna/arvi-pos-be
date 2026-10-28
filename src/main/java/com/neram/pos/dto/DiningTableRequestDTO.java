@@ -11,5 +11,6 @@ import lombok.NoArgsConstructor;
 @Builder
 public class DiningTableRequestDTO {
     private String name;
+    private String floor;
     private Integer displayOrder;
 }

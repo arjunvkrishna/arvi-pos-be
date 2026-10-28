@@ -76,6 +76,10 @@ public class CashierShift implements com.neram.pos.tenancy.TenantScoped , com.ne
     @Builder.Default
     private BigDecimal cashSales = BigDecimal.ZERO;
 
+    @Column(name = "gift_card_cash_sales", precision = 12, scale = 2)
+    @Builder.Default
+    private BigDecimal giftCardCashSales = BigDecimal.ZERO;
+
     @Column(name = "upi_sales", precision = 12, scale = 2)
     @Builder.Default
     private BigDecimal upiSales = BigDecimal.ZERO;

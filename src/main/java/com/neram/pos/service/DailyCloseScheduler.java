@@ -13,6 +13,7 @@ public class DailyCloseScheduler {
 
     @Scheduled(cron = "30 * * * * *")
     public void tick() {
+        if (!com.neram.pos.config.JobMode.interactive()) return;
         tenantExecutor.forEachActiveTenant("daily-close", dailyClose::sendIfDue);
     }
 }

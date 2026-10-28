@@ -1,6 +1,5 @@
 package com.neram.pos.dto;
 
-import com.neram.pos.entity.SystemNotification;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -16,5 +15,5 @@ public class NotificationSummaryDTO {
     private long unreadCount;
     private long pendingLeavesCount;
     private long lowStockAlertsCount;
-    private List<SystemNotification> notifications;
+    private List<NotificationDTO> notifications;
 }

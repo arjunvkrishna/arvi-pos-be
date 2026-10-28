@@ -65,6 +65,9 @@ public class InventoryItem implements com.neram.pos.access.OutletScoped {
     @Column(name = "expiry_warn_days", nullable = false)
     private Integer expiryWarnDays = 2;
 
+    @Column(name = "reorder_level", precision = 10, scale = 3, nullable = false)
+    private java.math.BigDecimal reorderLevel = java.math.BigDecimal.ZERO;
+
     private String supplier;
 
     @Column(name = "item_category", length = 50, nullable = false)

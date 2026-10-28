@@ -6,6 +6,7 @@ import com.neram.pos.dto.BillResponseDTO;
 import com.neram.pos.entity.Bill;
 import com.neram.pos.entity.BillItem;
 import com.neram.pos.entity.BillRefund;
+import com.neram.pos.entity.Customer;
 import com.neram.pos.entity.SystemNotification;
 import com.neram.pos.entity.User;
 import com.neram.pos.repository.BillItemRepository;
@@ -56,6 +57,13 @@ public class BillService {
     private final AppSettingService appSettingService;
     private final com.neram.pos.repository.SystemNotificationRepository notificationRepository;
     private final NotificationStreamService notificationStream;
+    private final com.neram.pos.repository.CustomerRepository customerRepository;
+    private final CustomerService customerService;
+    private final GiftCardService giftCardService;
+    private final CouponService couponService;
+    private final com.neram.pos.repository.ModifierRepository modifierRepository;
+    private final com.neram.pos.repository.ComboGroupItemRepository comboGroupItemRepository;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
     @Lazy
     private final ThermalPrinterService thermalPrinterService;
 
@@ -250,6 +258,12 @@ public class BillService {
             bill.setTakeawayToken(null);
         }
 
+        if (dto.getCustomerId() != null) {
+            bill.setCustomerId(dto.getCustomerId());
+        } else if (dto.getCustomerPhone() != null && !dto.getCustomerPhone().isBlank()) {
+            customerService.findByPhone(dto.getCustomerPhone()).ifPresent(c -> bill.setCustomerId(c.getId()));
+        }
+
         Bill.PaymentMode mode = Bill.PaymentMode.CASH;
         if (dto.getPaymentMode() != null) {
             try {
@@ -283,7 +297,11 @@ public class BillService {
                 item.setQuantity(itemDto.getQuantity() != null ? itemDto.getQuantity() : 1);
                 item.setCustomization(itemDto.getCustomization());
                 item.setIsTakeaway(Boolean.TRUE.equals(itemDto.getIsTakeaway()) || "TAKEAWAY".equals(oType));
-                BigDecimal price = resolveLinePrice(itemDto.getMenuItemId(), item.getQuantity(), itemDto.getPrice(), true);
+                String modSnap = sanitizeModifiersSnapshot(itemDto.getModifiersSnapshot());
+                String comboSnap = sanitizeComboSnapshot(itemDto.getMenuItemId(), itemDto.getComboSnapshot());
+                item.setModifiersSnapshot(modSnap);
+                item.setComboSnapshot(comboSnap);
+                BigDecimal price = resolveLinePrice(itemDto.getMenuItemId(), item.getQuantity(), itemDto.getPrice(), true, modSnap, comboSnap);
                 item.setPrice(price);
                 BigDecimal lineSubtotal = price.multiply(BigDecimal.valueOf(item.getQuantity())).setScale(2, RoundingMode.HALF_UP);
                 item.setSubtotal(lineSubtotal);
@@ -310,6 +328,7 @@ public class BillService {
             cashierShiftService.recordBillPayment(saved);
             saved = billRepository.save(saved);
             recipeService.settleBill(saved);
+            handlePaymentTendersAndLoyalty(saved, dto);
         }
 
         String createDetails = String.format("Created Bill #%s | %s | Net: ₹%.2f | Mode: %s | Items: %d",
@@ -402,10 +421,11 @@ public class BillService {
                 item.setQuantity(itemDto.getQuantity());
                 item.setCustomization(itemDto.getCustomization());
                 item.setIsTakeaway(Boolean.TRUE.equals(itemDto.getIsTakeaway()) || bill.getOrderType() == Bill.OrderType.TAKEAWAY);
-                if (itemDto.getPrice() != null && itemDto.getPrice().signum() < 0) {
-                    throw new IllegalArgumentException("Item price cannot be negative");
-                }
-                BigDecimal price = itemDto.getPrice() != null ? itemDto.getPrice().setScale(2, RoundingMode.HALF_UP) : BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+                String modSnap = sanitizeModifiersSnapshot(itemDto.getModifiersSnapshot());
+                String comboSnap = sanitizeComboSnapshot(itemDto.getMenuItemId(), itemDto.getComboSnapshot());
+                item.setModifiersSnapshot(modSnap);
+                item.setComboSnapshot(comboSnap);
+                BigDecimal price = resolveLinePrice(itemDto.getMenuItemId(), item.getQuantity(), itemDto.getPrice(), false, modSnap, comboSnap);
                 item.setPrice(price);
                 BigDecimal lineSubtotal = price.multiply(BigDecimal.valueOf(item.getQuantity())).setScale(2, RoundingMode.HALF_UP);
                 item.setSubtotal(lineSubtotal);
@@ -790,6 +810,10 @@ public class BillService {
             }
         } catch (Exception ignored) {}
 
+        if (dto.getCustomerId() != null) {
+            bill.setCustomerId(dto.getCustomerId());
+        }
+
         // If bill was already printed, it is awaiting payment confirmation - prevent modifying items
         if (bill.getStatus() == Bill.Status.BILL_PRINTED) {
             throw new IllegalStateException("Bill has already been printed and is awaiting payment confirmation. Manager must confirm payment before placing a new order on this table.");
@@ -839,6 +863,10 @@ public class BillService {
                 item.setQuantity(qty);
                 item.setCustomization(itemDto.getCustomization());
                 item.setIsTakeaway(Boolean.TRUE.equals(itemDto.getIsTakeaway()) || "TAKEAWAY".equals(reqOrderType) || (bill.getOrderType() == Bill.OrderType.TAKEAWAY));
+                String modSnap = sanitizeModifiersSnapshot(itemDto.getModifiersSnapshot());
+                String comboSnap = sanitizeComboSnapshot(itemDto.getMenuItemId(), itemDto.getComboSnapshot());
+                item.setModifiersSnapshot(modSnap);
+                item.setComboSnapshot(comboSnap);
 
                 String key = (itemDto.getMenuItemId() != null ? "ID_" + itemDto.getMenuItemId() : "NAME_" + itemDto.getItemName()) + "_" + Boolean.TRUE.equals(item.getIsTakeaway());
                 int prevPrinted = printedQtyMap.getOrDefault(key, 0);
@@ -846,7 +874,7 @@ public class BillService {
                 item.setPrintedQuantity(Math.min(prevPrinted, qty));
 
                 // Lines already on the bill may be re-sent after the dish went unavailable; only new lines must be available.
-                BigDecimal price = resolveLinePrice(itemDto.getMenuItemId(), qty, itemDto.getPrice(), !printedQtyMap.containsKey(key));
+                BigDecimal price = resolveLinePrice(itemDto.getMenuItemId(), qty, itemDto.getPrice(), !printedQtyMap.containsKey(key), modSnap, comboSnap);
                 item.setPrice(price);
                 BigDecimal lineSubtotal = price.multiply(BigDecimal.valueOf(item.getQuantity())).setScale(2, RoundingMode.HALF_UP);
                 item.setSubtotal(lineSubtotal);
@@ -1537,6 +1565,11 @@ public class BillService {
         }
 
         if (dto != null) {
+            if (dto.getCustomerId() != null) {
+                bill.setCustomerId(dto.getCustomerId());
+            } else if (dto.getCustomerPhone() != null && !dto.getCustomerPhone().isBlank()) {
+                customerService.findByPhone(dto.getCustomerPhone()).ifPresent(c -> bill.setCustomerId(c.getId()));
+            }
             if (dto.getPaymentMode() != null) {
                 try {
                     bill.setPaymentMode(Bill.PaymentMode.valueOf(dto.getPaymentMode().toUpperCase()));
@@ -1564,6 +1597,7 @@ public class BillService {
         Bill saved = billRepository.save(bill);
         cashierShiftService.recordBillPayment(saved);
         recipeService.settleBill(saved);
+        handlePaymentTendersAndLoyalty(saved, dto);
         saved = billRepository.save(saved);
 
         BillResponseDTO res = toDTO(saved);
@@ -1641,12 +1675,24 @@ public class BillService {
             throw new IllegalStateException("Payment can only be confirmed after bill has been printed or requested.");
         }
 
-        if (dto != null && dto.getPaymentMode() != null) {
-            try {
-                bill.setPaymentMode(Bill.PaymentMode.valueOf(dto.getPaymentMode().toUpperCase()));
-            } catch (Exception ignored) {}
+        if (dto != null) {
+            if (dto.getCustomerId() != null) {
+                bill.setCustomerId(dto.getCustomerId());
+            } else if (dto.getCustomerPhone() != null && !dto.getCustomerPhone().isBlank()) {
+                customerService.findByPhone(dto.getCustomerPhone()).ifPresent(c -> bill.setCustomerId(c.getId()));
+            }
+            if (dto.getPaymentMode() != null) {
+                try {
+                    bill.setPaymentMode(Bill.PaymentMode.valueOf(dto.getPaymentMode().toUpperCase()));
+                } catch (Exception ignored) {}
+            }
         } else if (bill.getPaymentMode() == null) {
             bill.setPaymentMode(Bill.PaymentMode.CASH);
+        }
+
+        if (dto != null && dto.getCouponCode() != null && !dto.getCouponCode().isBlank()) {
+            BigDecimal couponDisc = couponService.applyCouponSafely(dto.getCouponCode(), bill.getCustomerId(), bill.getId(), bill.getSubtotal());
+            bill.setCouponDiscount(couponDisc);
         }
 
         if (dto != null && (dto.getDiscountPercent() != null || dto.getTaxPercent() != null || dto.getParcelCharge() != null)) {
@@ -1676,6 +1722,7 @@ public class BillService {
         if (split.size() > 1) saveParts(saved.getId(), split);
         cashierShiftService.recordBillPayment(saved);
         recipeService.settleBill(saved);
+        handlePaymentTendersAndLoyalty(saved, dto);
         saved = billRepository.save(saved);
 
         BillResponseDTO res = toDTO(saved);
@@ -1683,6 +1730,86 @@ public class BillService {
                 String.format("Manager confirmed payment for Bill #%s | %s | Net: ₹%s | Mode: %s",
                         saved.getBillNumber(), getLocationDisplay(saved), saved.getNetAmount(), saved.getPaymentMode()));
         return res;
+    }
+
+    private void handlePaymentTendersAndLoyalty(Bill bill, BillRequestDTO dto) {
+        if (bill == null || bill.getId() == null) return;
+        List<BillRequestDTO.PaymentPart> parts = dto != null ? dto.getPayments() : null;
+
+        // 1. Gift card redemption
+        if (bill.getPaymentMode() == Bill.PaymentMode.GIFT_CARD) {
+            String gcCode = dto != null && dto.getGiftCardCode() != null ? dto.getGiftCardCode().trim() : null;
+            if (gcCode == null || gcCode.isBlank()) {
+                throw new IllegalArgumentException("Gift card code is required for GIFT_CARD payment.");
+            }
+            giftCardService.redeem(gcCode, bill.getNetAmount(), bill.getId());
+        } else if (parts != null) {
+            for (BillRequestDTO.PaymentPart p : parts) {
+                if ("GIFT_CARD".equalsIgnoreCase(p.getMode()) && p.getAmount() != null && p.getAmount().signum() > 0) {
+                    String code = p.getReference() != null && !p.getReference().isBlank() ? p.getReference().trim() : (dto != null && dto.getGiftCardCode() != null ? dto.getGiftCardCode().trim() : null);
+                    if (code == null || code.isBlank()) {
+                        throw new IllegalArgumentException("Gift card code is required for GIFT_CARD payment.");
+                    }
+                    giftCardService.redeem(code, p.getAmount(), bill.getId());
+                }
+            }
+        }
+
+        // 2. Loyalty points redemption
+        if (bill.getPaymentMode() == Bill.PaymentMode.LOYALTY_POINTS) {
+            if (bill.getCustomerId() == null) {
+                throw new IllegalArgumentException("Customer profile is required for LOYALTY_POINTS payment.");
+            }
+            int pts = bill.getNetAmount().intValue();
+            customerService.redeemPoints(bill.getCustomerId(), bill.getId(), pts);
+        } else if (parts != null) {
+            for (BillRequestDTO.PaymentPart p : parts) {
+                if ("LOYALTY_POINTS".equalsIgnoreCase(p.getMode()) && p.getAmount() != null && p.getAmount().signum() > 0) {
+                    if (bill.getCustomerId() == null) {
+                        throw new IllegalArgumentException("Customer profile is required for LOYALTY_POINTS payment.");
+                    }
+                    customerService.redeemPoints(bill.getCustomerId(), bill.getId(), p.getAmount().intValue());
+                }
+            }
+        } else if (dto != null && dto.getRedeemLoyaltyPoints() != null && dto.getRedeemLoyaltyPoints() > 0) {
+            if (bill.getCustomerId() == null) {
+                throw new IllegalArgumentException("Customer profile is required for LOYALTY_POINTS redemption.");
+            }
+            customerService.redeemPoints(bill.getCustomerId(), bill.getId(), dto.getRedeemLoyaltyPoints());
+        }
+
+        // 3. Loyalty points earning strictly on net taxable merchandise paid via monetary tenders
+        if (bill.getCustomerId() != null) {
+            BigDecimal subtotal = bill.getSubtotal() != null ? bill.getSubtotal() : BigDecimal.ZERO;
+            BigDecimal discAmt = bill.getDiscountAmount() != null ? bill.getDiscountAmount() : BigDecimal.ZERO;
+            BigDecimal promoDiscAmt = bill.getPromotionDiscountAmount() != null ? bill.getPromotionDiscountAmount() : BigDecimal.ZERO;
+            BigDecimal taxableMerchandise = subtotal.subtract(discAmt).subtract(promoDiscAmt).max(BigDecimal.ZERO);
+
+            BigDecimal monetarySpend = BigDecimal.ZERO;
+            if (parts != null && !parts.isEmpty()) {
+                for (BillRequestDTO.PaymentPart p : parts) {
+                    String m = p.getMode() != null ? p.getMode().toUpperCase() : "";
+                    if ("CASH".equals(m) || "UPI".equals(m) || "CARD".equals(m)) {
+                        monetarySpend = monetarySpend.add(p.getAmount() != null ? p.getAmount() : BigDecimal.ZERO);
+                    }
+                }
+            } else {
+                Bill.PaymentMode m = bill.getPaymentMode();
+                if (m == Bill.PaymentMode.CASH || m == Bill.PaymentMode.UPI || m == Bill.PaymentMode.CARD) {
+                    monetarySpend = bill.getNetAmount() != null ? bill.getNetAmount() : BigDecimal.ZERO;
+                }
+            }
+            BigDecimal eligibleMerchandiseSpend = taxableMerchandise.min(monetarySpend);
+            // Also called when nothing was paid in money (a bill paid with points): it is still a purchase, so the validity period restarts.
+            customerService.earnPoints(bill.getCustomerId(), bill.getId(), eligibleMerchandiseSpend);
+        }
+
+        // 4. Coupon redemption
+        if (dto != null && dto.getCouponCode() != null && !dto.getCouponCode().isBlank() && (bill.getCouponDiscount() == null || bill.getCouponDiscount().compareTo(BigDecimal.ZERO) == 0)) {
+            BigDecimal couponDisc = couponService.applyCouponSafely(dto.getCouponCode(), bill.getCustomerId(), bill.getId(), bill.getSubtotal());
+            bill.setCouponDiscount(couponDisc);
+            computeBillAmounts(bill, dto.getDiscountPercent(), dto.getTaxPercent(), dto.getGstEnabled(), dto.getCgstPercent(), dto.getSgstPercent(), dto.getParcelCharge());
+        }
     }
 
     private void saveParts(Long billId, List<SplitPayments.Part> parts) {
@@ -1780,6 +1907,8 @@ public class BillService {
                         .subtotal(it.getSubtotal())
                         .customization(it.getCustomization())
                         .isTakeaway(Boolean.TRUE.equals(it.getIsTakeaway()))
+                        .modifiersSnapshot(it.getModifiersSnapshot())
+                        .comboSnapshot(it.getComboSnapshot())
                         .build())
                 .collect(Collectors.toList());
 
@@ -1826,6 +1955,9 @@ public class BillService {
                 .kotNumber(b.getKotNumber() != null ? b.getKotNumber() : b.getBillNumber())
                 .tableNumber(b.getTableNumber())
                 .customerName(b.getCustomerName())
+                .customerId(b.getCustomerId())
+                .customerPhone(b.getCustomerId() != null ? customerRepository.findById(b.getCustomerId()).map(Customer::getPhone).orElse(null) : null)
+                .businessDate(b.getBusinessDate())
                 .outdoorToken(b.getOutdoorToken())
                 .takeawayToken(b.getTakeawayToken())
                 .subtotal(b.getSubtotal())
@@ -1846,6 +1978,8 @@ public class BillService {
                 .promotionName(b.getPromotionName())
                 .promotionPercentage(b.getPromotionPercentage())
                 .promotionDiscountAmount(b.getPromotionDiscountAmount() != null ? b.getPromotionDiscountAmount() : BigDecimal.ZERO)
+                .couponId(b.getCouponId())
+                .couponDiscount(b.getCouponDiscount() != null ? b.getCouponDiscount() : BigDecimal.ZERO)
                 .netAmount(b.getNetAmount())
                 .tipAmount(b.getTipAmount() != null ? b.getTipAmount() : BigDecimal.ZERO)
                 .paymentSummary(b.getPaymentSummary())
@@ -1899,6 +2033,10 @@ public class BillService {
      * (custom lines) are manager/admin only. New lines must be available on the menu.
      */
     private BigDecimal resolveLinePrice(Long menuItemId, Integer quantity, BigDecimal clientPrice, boolean requireAvailable) {
+        return resolveLinePrice(menuItemId, quantity, clientPrice, requireAvailable, null, null);
+    }
+
+    private BigDecimal resolveLinePrice(Long menuItemId, Integer quantity, BigDecimal clientPrice, boolean requireAvailable, String modifiersSnapshot, String comboSnapshot) {
         if (quantity == null || quantity < 1 || quantity > MAX_ITEM_QUANTITY) {
             throw new IllegalArgumentException("Item quantity must be between 1 and " + MAX_ITEM_QUANTITY);
         }
@@ -1919,8 +2057,119 @@ public class BillService {
         if (requireAvailable && (!here.available() || Boolean.FALSE.equals(menuItem.getActive()))) {
             throw new IllegalArgumentException("'" + menuItem.getName() + "' is currently unavailable");
         }
-        BigDecimal price = (privileged && clientPrice != null) ? clientPrice : here.price();
+        BigDecimal extra = calculateSnapshotAdditions(menuItemId, modifiersSnapshot, comboSnapshot);
+        BigDecimal price = (privileged && clientPrice != null) ? clientPrice : here.price().add(extra);
         return price.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private String sanitizeModifiersSnapshot(String snapshot) {
+        if (snapshot == null || snapshot.isBlank()) return snapshot;
+        try {
+            com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(snapshot);
+            if (root.isArray()) {
+                com.fasterxml.jackson.databind.node.ArrayNode arr = objectMapper.createArrayNode();
+                for (com.fasterxml.jackson.databind.JsonNode node : root) {
+                    com.fasterxml.jackson.databind.node.ObjectNode obj = node.deepCopy();
+                    Long modId = node.has("modifier_id") ? node.get("modifier_id").asLong() :
+                            (node.has("id") ? node.get("id").asLong() : null);
+                    if (modId != null) {
+                        modifierRepository.findById(modId).ifPresent(mod -> {
+                            obj.put("id", mod.getId());
+                            obj.put("modifier_id", mod.getId());
+                            obj.put("name", mod.getName());
+                            obj.put("price", mod.getPriceAdjustment());
+                            obj.put("priceAdjustment", mod.getPriceAdjustment());
+                            if (mod.getInventoryItemId() != null) {
+                                obj.put("inventoryItemId", mod.getInventoryItemId());
+                                obj.put("inventory_item_id", mod.getInventoryItemId());
+                            }
+                            if (mod.getInventoryQuantity() != null) {
+                                obj.put("inventoryQuantity", mod.getInventoryQuantity());
+                                obj.put("inventory_quantity", mod.getInventoryQuantity());
+                            }
+                        });
+                    }
+                    arr.add(obj);
+                }
+                return objectMapper.writeValueAsString(arr);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to sanitize modifiers snapshot: {}", e.getMessage());
+        }
+        return snapshot;
+    }
+
+    private String sanitizeComboSnapshot(Long parentDishId, String snapshot) {
+        if (snapshot == null || snapshot.isBlank()) return snapshot;
+        try {
+            com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(snapshot);
+            if (root.isArray()) {
+                com.fasterxml.jackson.databind.node.ArrayNode arr = objectMapper.createArrayNode();
+                for (com.fasterxml.jackson.databind.JsonNode node : root) {
+                    com.fasterxml.jackson.databind.node.ObjectNode obj = node.deepCopy();
+                    Long childId = node.has("menu_item_id") ? node.get("menu_item_id").asLong() :
+                            (node.has("menuItemId") ? node.get("menuItemId").asLong() : null);
+                    if (childId != null) {
+                        menuItemRepository.findById(childId).ifPresent(dish -> {
+                            obj.put("dish_name", dish.getName());
+                            obj.put("dishName", dish.getName());
+                        });
+                        if (parentDishId != null) {
+                            List<com.neram.pos.entity.ComboGroupItem> items = comboGroupItemRepository.findByDishIdAndChildId(parentDishId, childId);
+                            if (!items.isEmpty()) {
+                                BigDecimal extra = items.get(0).getAdditionalPrice();
+                                obj.put("extra_price", extra);
+                                obj.put("extraPrice", extra);
+                            }
+                        }
+                    }
+                    arr.add(obj);
+                }
+                return objectMapper.writeValueAsString(arr);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to sanitize combo snapshot: {}", e.getMessage());
+        }
+        return snapshot;
+    }
+
+    private BigDecimal calculateSnapshotAdditions(Long parentDishId, String modSnapshot, String comboSnapshot) {
+        BigDecimal extra = BigDecimal.ZERO;
+        if (modSnapshot != null && !modSnapshot.isBlank()) {
+            try {
+                com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(modSnapshot);
+                if (root.isArray()) {
+                    for (com.fasterxml.jackson.databind.JsonNode node : root) {
+                        Long modId = node.has("modifier_id") ? node.get("modifier_id").asLong() :
+                                (node.has("id") ? node.get("id").asLong() : null);
+                        if (modId != null) {
+                            com.neram.pos.entity.Modifier mod = modifierRepository.findById(modId).orElse(null);
+                            if (mod != null && mod.getPriceAdjustment() != null) {
+                                extra = extra.add(mod.getPriceAdjustment());
+                            }
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+        if (comboSnapshot != null && !comboSnapshot.isBlank() && parentDishId != null) {
+            try {
+                com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(comboSnapshot);
+                if (root.isArray()) {
+                    for (com.fasterxml.jackson.databind.JsonNode node : root) {
+                        Long childId = node.has("menu_item_id") ? node.get("menu_item_id").asLong() :
+                                (node.has("menuItemId") ? node.get("menuItemId").asLong() : null);
+                        if (childId != null) {
+                            List<com.neram.pos.entity.ComboGroupItem> items = comboGroupItemRepository.findByDishIdAndChildId(parentDishId, childId);
+                            if (!items.isEmpty() && items.get(0).getAdditionalPrice() != null) {
+                                extra = extra.add(items.get(0).getAdditionalPrice());
+                            }
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+        return extra;
     }
 
     private static void assertPercent(String label, double value) {
@@ -2068,6 +2317,7 @@ public class BillService {
             }
         }
 
+        BigDecimal couponDisc = bill.getCouponDiscount() != null ? bill.getCouponDiscount() : BigDecimal.ZERO;
         if (promoPct != null && promoPct > 0) {
             BigDecimal promoPctBd = BigDecimal.valueOf(promoPct);
             BigDecimal promoDiscAmt = totalAfterGstAndRoundOff.multiply(promoPctBd)
@@ -2077,14 +2327,14 @@ public class BillService {
             bill.setPromotionPercentage(promoPct);
             bill.setPromotionDiscountAmount(promoDiscAmt);
 
-            BigDecimal finalNet = totalAfterGstAndRoundOff.subtract(promoDiscAmt).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
+            BigDecimal finalNet = totalAfterGstAndRoundOff.subtract(promoDiscAmt).subtract(couponDisc).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
             bill.setNetAmount(finalNet);
         } else {
             bill.setPromotionId(null);
             bill.setPromotionName(null);
             bill.setPromotionPercentage(null);
             bill.setPromotionDiscountAmount(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
-            bill.setNetAmount(totalAfterGstAndRoundOff);
+            bill.setNetAmount(totalAfterGstAndRoundOff.subtract(couponDisc).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP));
         }
     }
 

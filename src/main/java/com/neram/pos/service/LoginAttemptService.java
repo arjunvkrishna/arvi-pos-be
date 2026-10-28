@@ -220,6 +220,7 @@ public class LoginAttemptService {
     public static String keyFor(String username) { return userKey(username); }
 
     public void cleanup() {
+        if (!com.neram.pos.config.JobMode.interactive()) return;
         int removed = repository.deleteStale(now(), now().minusDays(7));
         if (removed > 0) log.info("Removed {} stale login attempt record(s)", removed);
     }

@@ -28,4 +28,5 @@ public class ExpiryBatchDTO {
     private Long invoiceId;
     private String invoiceNumber;
     private LocalDate receivedOn;
+    private String batchNumber;
 }

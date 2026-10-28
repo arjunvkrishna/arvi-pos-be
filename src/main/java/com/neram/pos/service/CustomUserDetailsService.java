@@ -34,6 +34,10 @@ public class CustomUserDetailsService implements UserDetailsService {
         if (user.getRole() == User.Role.GENERAL_MANAGER) {
             authorities.add(new SimpleGrantedAuthority("ROLE_MANAGER"));
         }
+        // Cashiers, captains and kitchen staff are staff: they punch in, request leave and report low stock like any employee.
+        if (user.getRole() == User.Role.CASHIER || user.getRole() == User.Role.CAPTAIN || user.getRole() == User.Role.KITCHEN) {
+            authorities.add(new SimpleGrantedAuthority("ROLE_EMPLOYEE"));
+        }
 
         // Elevated roles have all permissions by default
         boolean isElevated = user.getRole() == User.Role.SUPER_ADMIN ||

@@ -33,6 +33,12 @@ public class Bill implements com.neram.pos.tenancy.TenantScoped , com.neram.pos.
     @Column(name = "customer_name")
     private String customerName;
 
+    @Column(name = "customer_id")
+    private Long customerId;
+
+    @Column(name = "business_date", nullable = false)
+    private java.time.LocalDate businessDate;
+
     @Column(nullable = false, precision = 12, scale = 2)
     private BigDecimal subtotal = BigDecimal.ZERO;
 
@@ -83,6 +89,12 @@ public class Bill implements com.neram.pos.tenancy.TenantScoped , com.neram.pos.
 
     @Column(name = "parcel_charge", precision = 12, scale = 2)
     private BigDecimal parcelCharge = BigDecimal.ZERO;
+
+    @Column(name = "coupon_id")
+    private Long couponId;
+
+    @Column(name = "coupon_discount", precision = 12, scale = 2)
+    private BigDecimal couponDiscount = BigDecimal.ZERO;
 
     @Column(name = "net_amount", nullable = false, precision = 12, scale = 2)
     private BigDecimal netAmount = BigDecimal.ZERO;
@@ -181,7 +193,17 @@ public class Bill implements com.neram.pos.tenancy.TenantScoped , com.neram.pos.
     @OneToMany(mappedBy = "bill", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
     private List<BillItem> items = new ArrayList<>();
 
-    public enum PaymentMode { CASH, UPI, CARD }
+    @PrePersist
+    public void prePersist() {
+        if (this.businessDate == null) {
+            this.businessDate = com.neram.pos.util.BusinessDate.now();
+        }
+        if (this.createdAt == null) {
+            this.createdAt = LocalDateTime.now();
+        }
+    }
+
+    public enum PaymentMode { CASH, UPI, CARD, GIFT_CARD, LOYALTY_POINTS }
     public enum Status { DRAFT, ACTIVE, KOT_REQUESTED, KOT_PRINTED, BILL_REQUESTED, BILL_PRINTED, PAID, CANCELLED, REFUNDED, PARTIALLY_REFUNDED, VOIDED }
     public enum OrderType { TABLE, OUTDOOR, TAKEAWAY }
 }

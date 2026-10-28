@@ -24,4 +24,6 @@ public class BillItemResponseDTO {
     private Integer previousQuantity;
     private Integer currentTotalQuantity;
     private Boolean isTakeaway;
+    private String modifiersSnapshot;
+    private String comboSnapshot;
 }

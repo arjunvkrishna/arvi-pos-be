@@ -1083,7 +1083,37 @@ public class SupplierService {
                 .collect(Collectors.toList());
         dto.setTopSuppliersByInvoice(topSuppliers);
 
+        // Delivery metrics
+        int trackedDeliveryCount = 0;
+        int onTimeCount = 0;
+        long totalLeadDays = 0;
+        int leadDaysCount = 0;
+        for (SupplierInvoice inv : allInvoices) {
+            if (inv.getDeliveryDate() == null) continue;
+            // On time only means something against a promised date; the payment due date is not a delivery promise
+            if (inv.getExpectedDeliveryDate() != null) {
+                trackedDeliveryCount++;
+                if (!inv.getDeliveryDate().isAfter(inv.getExpectedDeliveryDate())) onTimeCount++;
+            }
+            if (inv.getInvoiceDate() != null) {
+                long days = java.time.temporal.ChronoUnit.DAYS.between(inv.getInvoiceDate(), inv.getDeliveryDate());
+                if (days >= 0) {
+                    totalLeadDays += days;
+                    leadDaysCount++;
+                }
+            }
+        }
+        // No recorded delivery dates means no figure (null), never an invented one
+        dto.setOnTimeDeliveryRatePercent(trackedDeliveryCount > 0 ? round1(((double) onTimeCount / trackedDeliveryCount) * 100.0) : null);
+        dto.setAverageLeadTimeDays(leadDaysCount > 0 ? round1((double) totalLeadDays / leadDaysCount) : null);
+        dto.setFulfillmentRatePercent(allInvoices.isEmpty() ? null : round1(
+                Math.min(100.0, (1.0 - ((double) allInvoices.stream().filter(i -> i.getStatus() == SupplierInvoice.InvoiceStatus.OVERDUE).count() / allInvoices.size())) * 100.0)));
+
         return dto;
+    }
+
+    private static Double round1(double v) {
+        return Math.round(v * 10.0) / 10.0;
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────────

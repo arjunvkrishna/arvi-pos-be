@@ -18,6 +18,9 @@ public class BillResponseDTO {
     private String orderType;
     private String tableNumber;
     private String customerName;
+    private Long customerId;
+    private String customerPhone;
+    private java.time.LocalDate businessDate;
     private String outdoorToken;
     private String takeawayToken;
     private java.math.BigDecimal subtotal;
@@ -36,6 +39,8 @@ public class BillResponseDTO {
     private String promotionName;
     private Double promotionPercentage;
     private java.math.BigDecimal promotionDiscountAmount;
+    private Long couponId;
+    private java.math.BigDecimal couponDiscount;
     private java.math.BigDecimal netAmount;
     /** tip recorded at payment (not part of netAmount) */
     private java.math.BigDecimal tipAmount;

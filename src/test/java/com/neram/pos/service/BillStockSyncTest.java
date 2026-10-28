@@ -78,7 +78,7 @@ class BillStockSyncTest {
 
     @BeforeEach
     void setUp() {
-        recipes = new RecipeService(recipeRepo, menuRepo, itemRepo, txnRepo, audit);
+        recipes = new RecipeService(recipeRepo, menuRepo, itemRepo, txnRepo, audit, org.mockito.Mockito.mock(com.neram.pos.repository.ModifierRepository.class));
         bun = item(1, "Burger Bun", "piece", 8);           // 2 packets of 4
         miniBun = item(2, "Mini Burger Bun", "piece", 12);
         bread = item(3, "Sandwich Bread", "piece", 20);

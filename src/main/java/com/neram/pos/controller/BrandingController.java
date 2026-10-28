@@ -49,9 +49,13 @@ public class BrandingController {
     /** The image in effect for the caller's branch (or the named branch), for preview. */
     @GetMapping("/{kind}")
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<byte[]> get(@PathVariable String kind, @RequestParam(required = false) Long outletId) {
+    public ResponseEntity<byte[]> get(@PathVariable String kind, @RequestParam(required = false) Long outletId,
+                                      Authentication auth) {
         Kind k = parseKind(kind);
-        Long outlet = outletId != null ? outletId : OutletContext.current().orElse(null);
+        // Only the owner and main managers may ask for another branch's image; everyone else gets their own branch's.
+        boolean cafeWide = auth != null && auth.getPrincipal() instanceof CafeUserDetails user
+                && AccessPolicy.hasCafeWideAccess(user.getRole());
+        Long outlet = outletId != null && cafeWide ? outletId : OutletContext.current().orElse(null);
         return brandingService.effective(k, outlet)
                 .map(img -> ResponseEntity.ok()
                         .contentType(MediaType.parseMediaType(img.contentType()))
@@ -61,7 +65,7 @@ public class BrandingController {
     }
 
     @PutMapping(value = "/{kind}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PreAuthorize("isAuthenticated()")
+    @PreAuthorize("hasAnyAuthority('PERM_MANAGE_SETTINGS', 'PERM_MANAGE_OUTLET_SETTINGS')")
     public ResponseEntity<?> upload(@PathVariable String kind,
                                     @RequestParam(required = false) Long outletId,
                                     @RequestParam("file") MultipartFile file,
@@ -78,7 +82,7 @@ public class BrandingController {
     }
 
     @DeleteMapping("/{kind}")
-    @PreAuthorize("isAuthenticated()")
+    @PreAuthorize("hasAnyAuthority('PERM_MANAGE_SETTINGS', 'PERM_MANAGE_OUTLET_SETTINGS')")
     public ResponseEntity<?> remove(@PathVariable String kind, @RequestParam(required = false) Long outletId, Authentication auth) {
         Kind k = parseKind(kind);
         assertMayEdit(auth, outletId);
