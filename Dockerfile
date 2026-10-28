@@ -14,9 +14,10 @@ RUN mvn package -DskipTests -B
 # ── Stage 2: Minimal Java runtime for the TARGET platform (jlink) ─────────────
 # Deliberately no --platform flag: this stage runs once per target architecture so the JRE matches it.
 # Only the modules the app needs are kept (the full JRE is ~136 MB, this is roughly half).
+# java.compiler: Spring Data JPA 4 (Spring Boot 4) loads javax.lang.model.SourceVersion at startup.
 FROM eclipse-temurin:17-jdk-noble AS jre-build
 RUN "$JAVA_HOME/bin/jlink" \
-      --add-modules java.base,java.datatransfer,java.desktop,java.instrument,java.logging,java.management,java.management.rmi,java.naming,java.net.http,java.prefs,java.rmi,java.scripting,java.security.jgss,java.security.sasl,java.sql,java.sql.rowset,java.transaction.xa,java.xml,java.xml.crypto,jdk.charsets,jdk.crypto.ec,jdk.localedata,jdk.management,jdk.unsupported,jdk.zipfs \
+      --add-modules java.base,java.compiler,java.datatransfer,java.desktop,java.instrument,java.logging,java.management,java.management.rmi,java.naming,java.net.http,java.prefs,java.rmi,java.scripting,java.security.jgss,java.security.sasl,java.sql,java.sql.rowset,java.transaction.xa,java.xml,java.xml.crypto,jdk.charsets,jdk.crypto.ec,jdk.localedata,jdk.management,jdk.unsupported,jdk.zipfs \
       --strip-debug --no-man-pages --no-header-files --compress=2 \
       --output /javaruntime
 

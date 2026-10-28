@@ -31,8 +31,10 @@ public class SystemNotification implements com.neram.pos.access.OutletScoped {
     @Column(nullable = false, length = 1000)
     private String message;
 
+    @Column(name = "reference_id")
     private Long referenceId;
 
+    @Column(name = "created_by")
     private String createdBy;
 
     @Column(nullable = false)
@@ -40,7 +42,7 @@ public class SystemNotification implements com.neram.pos.access.OutletScoped {
     @Builder.Default
     private Status status = Status.UNREAD;
 
-    @Column(nullable = false)
+    @Column(name = "created_at", nullable = false)
     @Builder.Default
     private LocalDateTime createdAt = LocalDateTime.now();
 
