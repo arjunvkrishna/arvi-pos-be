@@ -39,7 +39,7 @@ services:
       options: {max-size: "10m", max-file: "3"}
 
   backend:
-    image: arvi-backend:${ARVI_VERSION:-3.0.3}
+    image: arvi-backend:${ARVI_VERSION:-3.0.4}
     environment:
       DB_HOST: db
       DB_PORT: "5432"
@@ -68,7 +68,7 @@ services:
     logging: *logging
 
   web:
-    image: arvi-ui:${ARVI_VERSION:-3.0.3}
+    image: arvi-ui:${ARVI_VERSION:-3.0.4}
     ports:
       # host mode keeps the visitor's real address (login throttling and the audit trail use it); ingress mode would hide it
       - {target: 80, published: "${WEB_PORT:-80}", protocol: tcp, mode: host}
