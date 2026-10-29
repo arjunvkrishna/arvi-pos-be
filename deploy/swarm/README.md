@@ -9,9 +9,9 @@ Three services on one node: `db` (PostgreSQL 18, one database per cafe plus the 
 
    ```bash
    # on your machine, from the backend and UI repositories
-   docker build -t arvi-backend:3.0.1 .          # in arvi-pos-be
-   docker build -t arvi-ui:3.0.1 .               # in arvi-pos-ui
-   docker save arvi-backend:3.0.1 arvi-ui:3.0.1 | gzip | ssh <node> 'gunzip | docker load'
+   docker build -t arvi-backend:3.0.2 .          # in arvi-pos-be
+   docker build -t arvi-ui:3.0.2 .               # in arvi-pos-ui
+   docker save arvi-backend:3.0.2 arvi-ui:3.0.2 | gzip | ssh <node> 'gunzip | docker load'
    ```
 
 2. Copy this folder to the node and run it:
