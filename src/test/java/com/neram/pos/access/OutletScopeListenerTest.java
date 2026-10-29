@@ -2,6 +2,7 @@ package com.neram.pos.access;
 
 import com.neram.pos.entity.Bill;
 import com.neram.pos.entity.DiningTable;
+import com.neram.pos.entity.User;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -63,6 +64,34 @@ class OutletScopeListenerTest {
         DiningTable t = new DiningTable();
         listener.stampAndCheckNew(t);
         assertNull(t.getOutletId(), "never stamped with the placeholder id");
+    }
+
+    private static User loginOf(User.Role role, Long outlet) {
+        User u = new User();
+        u.setRole(role);
+        u.setOutletId(outlet);
+        return u;
+    }
+
+    @Test
+    void anOwnersOrMainManagersLoginResolvesInEveryBranch() {
+        OutletContext.set(2L);
+        for (User.Role cafeWide : new User.Role[] {User.Role.ADMIN, User.Role.CAFE_ADMIN, User.Role.GENERAL_MANAGER}) {
+            User u = loginOf(cafeWide, 1L);
+            assertDoesNotThrow(() -> listener.checkLoaded(u), cafeWide + " must load while looking at another branch");
+            assertDoesNotThrow(() -> listener.checkUpdated(u), cafeWide + " must be updatable (last login, password) from any branch");
+        }
+        User fresh = loginOf(User.Role.GENERAL_MANAGER, null);
+        listener.stampAndCheckNew(fresh);
+        assertNull(fresh.getOutletId(), "a main manager created while a branch is picked stays cafe-wide");
+    }
+
+    @Test
+    void aBranchManagersLoginStaysInItsOwnBranch() {
+        OutletContext.set(2L);
+        assertThrows(OutletAccessDeniedException.class, () -> listener.checkLoaded(loginOf(User.Role.MANAGER, 1L)));
+        assertThrows(OutletAccessDeniedException.class, () -> listener.checkLoaded(loginOf(User.Role.CASHIER, 1L)));
+        assertDoesNotThrow(() -> listener.checkLoaded(loginOf(User.Role.MANAGER, 2L)));
     }
 
     @Test

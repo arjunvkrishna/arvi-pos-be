@@ -12,7 +12,7 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Entity
 @Table(name = "users")
-@org.hibernate.annotations.Filter(name = "outletScope", condition = "(outlet_id = :outletId OR outlet_id IS NULL)")
+@org.hibernate.annotations.Filter(name = "outletScope", condition = "(outlet_id = :outletId OR outlet_id IS NULL OR role IN ('ADMIN', 'CAFE_ADMIN', 'GENERAL_MANAGER'))")
 public class User implements com.neram.pos.tenancy.TenantScoped , com.neram.pos.access.OutletScoped {
 
     @Id
@@ -68,6 +68,12 @@ public class User implements com.neram.pos.tenancy.TenantScoped , com.neram.pos.
 
     @Column(name = "updated_at")
     private LocalDateTime updatedAt = LocalDateTime.now();
+
+    /** Owners and main managers run every branch: their login must resolve whichever branch they are looking at. */
+    @Override
+    public boolean staysInEveryBranch() {
+        return role == Role.ADMIN || role == Role.CAFE_ADMIN || role == Role.GENERAL_MANAGER;
+    }
 
     public enum Role {
         SUPER_ADMIN, ADMIN, CAFE_ADMIN, GENERAL_MANAGER, MANAGER, CASHIER, CAPTAIN, EMPLOYEE, KITCHEN

@@ -1,6 +1,7 @@
 package com.neram.pos.service;
 
 import com.neram.pos.access.AccessPolicy;
+import com.neram.pos.access.OutletContext;
 import com.neram.pos.dto.CreateUserRequestDTO;
 import com.neram.pos.dto.UserDTO;
 import com.neram.pos.entity.Employee;
@@ -356,10 +357,7 @@ public class UserService {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException("User not found with username: " + username));
 
-        Employee emp = null;
-        if (user.getEmployeeId() != null) {
-            emp = employeeRepository.findById(user.getEmployeeId()).orElse(null);
-        }
+        Employee emp = employeeOf(user);
 
         boolean isElevated = user.getRole() == User.Role.SUPER_ADMIN ||
                              user.getRole() == User.Role.ADMIN ||
@@ -435,11 +433,18 @@ public class UserService {
     public com.neram.pos.dto.UserProfileDTO updateMyProfile(String username, com.neram.pos.dto.UpdateProfileRequestDTO dto) {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException("User not found with username: " + username));
-
-        Employee emp = null;
-        if (user.getEmployeeId() != null) {
-            emp = employeeRepository.findById(user.getEmployeeId()).orElse(null);
+        // an owner's own staff record sits in one branch, but they may edit it from whichever branch they are looking at
+        if (user.staysInEveryBranch()) {
+            OutletContext.callUnrestricted(() -> { applyProfile(user, dto); return null; });
+        } else {
+            applyProfile(user, dto);
         }
+        auditLogService.log("UPDATE", "USER_PROFILE", user.getId(), null, "User updated profile: " + username);
+        return getMyProfile(username);
+    }
+
+    private void applyProfile(User user, com.neram.pos.dto.UpdateProfileRequestDTO dto) {
+        Employee emp = user.getEmployeeId() == null ? null : employeeRepository.findById(user.getEmployeeId()).orElse(null);
         if (emp == null) {
             emp = new Employee();
             emp.setName(dto.getName() != null && !dto.getName().isBlank() ? dto.getName().trim() : user.getUsername());
@@ -464,10 +469,14 @@ public class UserService {
             emp.setAddress(dto.getAddress().trim());
         }
         emp.setUpdatedAt(LocalDateTime.now());
-        employeeRepository.save(emp);
+        employeeRepository.saveAndFlush(emp);   // flushed here: the branch guard runs on write, which must happen inside the unrestricted block
+    }
 
-        auditLogService.log("UPDATE", "USER_PROFILE", user.getId(), null, "User updated profile: " + username);
-        return getMyProfile(username);
+    /** The staff record behind a login. An owner's login works in every branch, but its staff record sits in only one of them. */
+    private Employee employeeOf(User u) {
+        if (u.getEmployeeId() == null) return null;
+        java.util.function.Supplier<Employee> load = () -> employeeRepository.findById(u.getEmployeeId()).orElse(null);
+        return u.staysInEveryBranch() ? OutletContext.callUnrestricted(load) : load.get();
     }
 
     private static boolean holds(org.springframework.security.core.Authentication auth, String authority) {
@@ -481,10 +490,8 @@ public class UserService {
 
     private UserDTO toDTO(User u) {
         String employeeName = u.getUsername();
-        if (u.getEmployeeId() != null) {
-            Employee emp = employeeRepository.findById(u.getEmployeeId()).orElse(null);
-            if (emp != null) employeeName = emp.getName();
-        }
+        Employee emp = employeeOf(u);
+        if (emp != null) employeeName = emp.getName();
 
         boolean isElevated = u.getRole() == User.Role.SUPER_ADMIN ||
                              u.getRole() == User.Role.ADMIN ||

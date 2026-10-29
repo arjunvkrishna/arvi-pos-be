@@ -12,14 +12,14 @@ public class OutletScopeListener {
 
     @PostLoad
     public void checkLoaded(Object entity) {
-        if (entity instanceof OutletScoped scoped) {
+        if (entity instanceof OutletScoped scoped && !scoped.staysInEveryBranch()) {
             check(scoped.getOutletId());
         }
     }
 
     @PrePersist
     public void stampAndCheckNew(Object entity) {
-        if (entity instanceof OutletScoped scoped) {
+        if (entity instanceof OutletScoped scoped && !scoped.staysInEveryBranch()) {
             Long limit = OutletContext.current().orElse(null);
             if (scoped.getOutletId() == null && limit != null && limit != OutletContext.NO_OUTLET) {
                 scoped.setOutletId(limit);
@@ -30,7 +30,7 @@ public class OutletScopeListener {
 
     @PreUpdate
     public void checkUpdated(Object entity) {
-        if (entity instanceof OutletScoped scoped) {
+        if (entity instanceof OutletScoped scoped && !scoped.staysInEveryBranch()) {
             check(scoped.getOutletId());
         }
     }

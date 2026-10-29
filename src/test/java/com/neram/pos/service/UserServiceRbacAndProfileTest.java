@@ -375,6 +375,6 @@ class UserServiceRbacAndProfileTest {
         assertEquals("+91 9876543210", emp.getPhone());
         assertEquals("new@cafe.internal", emp.getEmail());
         assertEquals("123 Coffee Lane, Central", emp.getAddress());
-        verify(employeeRepository).save(emp);
+        verify(employeeRepository).saveAndFlush(emp);
     }
 }

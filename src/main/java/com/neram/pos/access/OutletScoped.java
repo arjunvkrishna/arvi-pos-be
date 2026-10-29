@@ -8,4 +8,12 @@ public interface OutletScoped {
     Long getOutletId();
 
     void setOutletId(Long outletId);
+
+    /**
+     * True for a record that works in every branch even though a home branch is stored on it, such as an owner's login.
+     * Such a record is never hidden from, nor refused in, another branch.
+     */
+    default boolean staysInEveryBranch() {
+        return false;
+    }
 }
