@@ -40,6 +40,7 @@ ENV TZ=Asia/Kolkata
 ENV JAVA_OPTS="-XX:+UseSerialGC -Xms64m -Xmx320m -XX:MaxMetaspaceSize=160m -Xss512k -XX:ReservedCodeCacheSize=64m -XX:TieredStopAtLevel=1 -XX:MaxHeapFreeRatio=30 -XX:MinHeapFreeRatio=10 -XX:+ExitOnOutOfMemoryError"
 
 COPY --from=build /app/target/*.jar app.jar
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 RUN mkdir -p /app/logs && chown -R 10001:10001 /app/logs
 
@@ -51,4 +52,4 @@ EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 CMD curl -fsS http://127.0.0.1:8080/api/health || exit 1
 
-ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -Djava.security.egd=file:/dev/./urandom -jar app.jar"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

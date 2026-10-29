@@ -1,0 +1,96 @@
+# ARVI POS on Docker Swarm: PostgreSQL + backend + web (nginx), on one node.
+#
+#   ./deploy.sh            first install and every update (see README.md)
+#
+# Images are built elsewhere and loaded onto the node (no registry), so the stack is deployed with `--resolve-image never`.
+# Secrets are Swarm secrets; the backend reads them through its *_FILE variables (docker-entrypoint.sh).
+
+services:
+  db:
+    image: postgres:18.6-alpine
+    # one cafe = one database on this server; connection pools are per cafe, so allow some headroom over the default 100
+    command: ["postgres", "-c", "max_connections=150", "-c", "shared_buffers=192MB", "-c", "effective_cache_size=768MB",
+              "-c", "log_min_duration_statement=1000"]
+    environment:
+      POSTGRES_USER: arvi_user
+      POSTGRES_DB: arvi_control
+      POSTGRES_PASSWORD_FILE: /run/secrets/arvi_db_password
+      TZ: Asia/Kolkata
+    secrets: [arvi_db_password]
+    volumes:
+      - arvi_pgdata:/var/lib/postgresql
+    networks: [arvi]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U arvi_user -d arvi_control"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    stop_grace_period: 60s
+    deploy:
+      replicas: 1
+      restart_policy: {condition: any, delay: 5s}
+      update_config: {order: stop-first}
+      resources:
+        limits: {memory: 768M}
+        reservations: {memory: 256M}
+    logging: &logging
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+  backend:
+    image: arvi-backend:${ARVI_VERSION:-3.0.0}
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: arvi_control
+      DB_USER: arvi_user
+      DB_PASSWORD_FILE: /run/secrets/arvi_db_password
+      TENANT_SECRET_KEY_FILE: /run/secrets/arvi_tenant_secret_key
+      JWT_SECRET_FILE: /run/secrets/arvi_jwt_secret
+      PLATFORM_ADMIN_INITIAL_PASSWORD_FILE: /run/secrets/arvi_platform_admin_password
+      SEED_DEMO_DATA: "false"
+      CORS_ALLOWED_ORIGINS: ${PUBLIC_URL:-*}
+      TZ: Asia/Kolkata
+    secrets: [arvi_db_password, arvi_tenant_secret_key, arvi_jwt_secret, arvi_platform_admin_password]
+    volumes:
+      - arvi_logs:/app/logs
+    networks: [arvi]
+    stop_grace_period: 30s
+    deploy:
+      replicas: 1
+      restart_policy: {condition: any, delay: 10s}
+      # one copy at a time: a second backend would run the scheduled jobs twice while the old one drains
+      update_config: {order: stop-first, failure_action: rollback}
+      resources:
+        limits: {memory: 768M}
+        reservations: {memory: 384M}
+    logging: *logging
+
+  web:
+    image: arvi-ui:${ARVI_VERSION:-3.0.0}
+    ports:
+      # host mode keeps the visitor's real address (login throttling and the audit trail use it); ingress mode would hide it
+      - {target: 80, published: "${WEB_PORT:-80}", protocol: tcp, mode: host}
+    networks: [arvi]
+    deploy:
+      replicas: 1
+      restart_policy: {condition: any, delay: 5s}
+      update_config: {order: stop-first}
+      resources:
+        limits: {memory: 128M}
+    logging: *logging
+
+networks:
+  arvi:
+    driver: overlay
+
+volumes:
+  arvi_pgdata:
+  arvi_logs:
+
+secrets:
+  arvi_db_password: {external: true}
+  arvi_tenant_secret_key: {external: true}
+  arvi_jwt_secret: {external: true}
+  arvi_platform_admin_password: {external: true}
