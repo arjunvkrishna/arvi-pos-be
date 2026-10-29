@@ -6,7 +6,7 @@ import com.neram.pos.repository.UserRepository;
 import com.neram.pos.service.GiftCardService;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
+import org.springframework.data.web.PagedModel;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -29,8 +29,9 @@ public class GiftCardController {
 
     @GetMapping("/gift-cards")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
-    public ResponseEntity<Page<GiftCardDTO>> listCards(Pageable pageable) {
-        return ResponseEntity.ok(giftCardService.listCards(pageable));
+    public ResponseEntity<PagedModel<GiftCardDTO>> listCards(Pageable pageable) {
+        // PagedModel is Spring Data's stable page shape ({content, page:{size, number, totalElements, totalPages}}); a bare Page is not
+        return ResponseEntity.ok(new PagedModel<>(giftCardService.listCards(pageable)));
     }
 
     @PostMapping("/gift-cards")

@@ -136,7 +136,8 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(IllegalStateException.class)
     public ResponseEntity<Map<String, Object>> handleIllegalState(IllegalStateException e, HttpServletRequest request) {
         String msg = messageOf(e, "Operation cannot be performed in current state");
-        log.warn("Illegal State [method={}, path={}, traceId={}]: {}",
+        // A refusal because of the current state of things ("no shift is open", "plan limit reached") is the app working as designed, not a fault
+        log.info("Not possible right now [method={}, path={}, traceId={}]: {}",
                 getMethod(request), getPath(request), getTraceId(), msg);
         return buildResponse(HttpStatus.BAD_REQUEST, msg, request, null);
     }
