@@ -31,6 +31,7 @@ public class TelegramNotificationService {
     private final EmployeeRepository employeeRepository;
     private final TelegramBotClient botClient;
     private final AuditLogService auditLogService;
+    private final org.springframework.context.ApplicationEventPublisher events;
 
     private static final String CODE_CHARS = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
     private static final SecureRandom RANDOM = new SecureRandom();
@@ -110,6 +111,7 @@ public class TelegramNotificationService {
         s = settingRepository.save(s);
         String newVal = String.format("enabled=%s, sendTime=%s, tz=%s", s.getEnabled(), s.getDailySendTime(), s.getTimezone());
         auditLogService.log("UPDATE_SETTINGS", "TELEGRAM_SETTINGS", s.getId(), oldVal, newVal);
+        events.publishEvent(new TimedCafeJobs.Changed());
 
         return getSettingsDTO();
     }

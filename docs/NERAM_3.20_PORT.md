@@ -42,6 +42,11 @@ Neram's V71-V83 collided with this project's own V71/V72, so they were renumbere
 * **Background work is per cafe.** Report exports no longer poll: a job starts the moment it is submitted, inside that cafe's
   database and the requester's branch scope; one nightly sweep per cafe recovers crashed jobs and purges old files.
   Loyalty expiry (now daily, 04:20) and notification cleanup go through `TenantMaintenanceScheduler`.
+* **Timed reports are booked, not polled.** The Telegram low-stock report and the end-of-day close used to wake every minute and
+  look inside every cafe's database. `TimedCafeJobs` reads each cafe's two times once and books a trigger for exactly that
+  minute (in the cafe's own time zone); nothing touches the cafe's database until it fires. Saving either setting re-books
+  that cafe at once, and a refresh every 30 minutes (`app.jobs.schedule-refresh-ms`) picks up cafes added, suspended or
+  changed by another process. Telegram is used only for these reports and for linking managers; there is no customer/CRM use of it.
 * **Caches and push are keyed by cafe.** The menu-version fingerprint is remembered per cafe and branch (and now includes branch
   price overrides); per-user SSE pushes no longer cross cafes that share a username such as `admin`.
 * **Public links name the cafe**: `/api/public/{cafe}/gift-cards/{code}/balance`, `/api/public/{cafe}/customers/unsubscribe`,

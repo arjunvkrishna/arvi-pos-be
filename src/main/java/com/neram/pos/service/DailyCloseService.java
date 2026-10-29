@@ -38,6 +38,7 @@ public class DailyCloseService {
     private final AppSettingService settings;
     private final TelegramNotificationService telegram;
     private final StaffPerformanceService staffService;
+    private final org.springframework.context.ApplicationEventPublisher events;
 
     private static double d(BigDecimal v) { return v == null ? 0.0 : v.doubleValue(); }
 
@@ -98,6 +99,7 @@ public class DailyCloseService {
         if (s.getTime() == null || !HHMM.matcher(s.getTime()).matches()) throw new IllegalArgumentException("Time must look like 23:30.");
         settings.setSetting(KEY_ENABLED, String.valueOf(s.isEnabled()), username);
         settings.setSetting(KEY_TIME, s.getTime(), username);
+        events.publishEvent(new TimedCafeJobs.Changed());
         return getSettings();
     }
 
@@ -111,13 +113,12 @@ public class DailyCloseService {
         return new MoneyReportsDTO.SendResult(sent, failed, recipients, msg);
     }
 
-    /** Called every minute: sends today's report once, at the configured time, when enabled. */
+    /** Sends today's report once, when enabled. Called at the configured time by {@link TimedCafeJobs}; a second call the same day does nothing. */
     public void sendIfDue() {
         try {
             MoneyReportsDTO.DailyCloseSettings s = getSettings();
             if (!s.isEnabled()) return;
             java.time.ZonedDateTime now = java.time.ZonedDateTime.now(telegram.reportZone());
-            if (!now.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")).equals(s.getTime())) return;
             String today = now.toLocalDate().toString();
             if (today.equals(settings.getSetting(KEY_LAST_SENT, ""))) return;
             settings.setSetting(KEY_LAST_SENT, today, "SYSTEM");
