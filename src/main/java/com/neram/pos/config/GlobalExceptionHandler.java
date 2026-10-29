@@ -20,6 +20,7 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
@@ -218,6 +219,14 @@ public class GlobalExceptionHandler {
     public void handleAsyncTimeout(HttpServletRequest request) {
         if (log.isDebugEnabled()) {
             log.debug("SSE async request stream timeout [path={}, traceId={}]", getPath(request), getTraceId());
+        }
+    }
+
+    /** The browser closed a live-updates connection (tab closed, page changed): nobody is left to answer and nothing is wrong. */
+    @ExceptionHandler(AsyncRequestNotUsableException.class)
+    public void handleClientGone(HttpServletRequest request) {
+        if (log.isDebugEnabled()) {
+            log.debug("Live-updates client disconnected [path={}]", getPath(request));
         }
     }
 
