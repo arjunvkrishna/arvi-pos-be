@@ -109,8 +109,10 @@ class EndpointAccessMatrixTest {
             // the cafe logo and payment QR shown in the header and on bills (editing them needs a settings right)
             "BrandingController#overview", "BrandingController#get");
 
-    /** Extra things one kind of staff does by their job: the cashier sells gift cards at the till. */
-    private static final Map<Role, Set<String>> ROLE_SPECIFIC = Map.of(Role.CASHIER, Set.of("GiftCardController#issueCard"));
+    /** Extra things one kind of staff does by their job: the cashier sells gift cards at the till, the kitchen reads its tickets. */
+    private static final Map<Role, Set<String>> ROLE_SPECIFIC = Map.of(
+            Role.CASHIER, Set.of("GiftCardController#issueCard"),
+            Role.KITCHEN, Set.of("KitchenController#tickets", "BillController#streamOrderChanges"));
 
     // ---- the people --------------------------------------------------------------------------------------------
 
@@ -264,6 +266,19 @@ class EndpointAccessMatrixTest {
     }
 
     @Test
+    @DisplayName("the kitchen role reads the kitchen tickets without any order-taking right; other bare staff cannot")
+    void kitchenReadsItsTickets() throws Exception {
+        for (Endpoint e : listed(Set.of("KitchenController#tickets"))) {
+            assertTrue(allows(e.rule(), person(Role.KITCHEN)), "the kitchen cannot read its tickets");
+            for (Role r : List.of(Role.CASHIER, Role.CAPTAIN, Role.EMPLOYEE)) {
+                assertFalse(allows(e.rule(), person(r)), r + " without an order right can read the kitchen tickets");
+            }
+            assertTrue(allows(e.rule(), person(Role.CAPTAIN, u -> u.setCanTakeOrders(true))), "staff who take orders can");
+            for (Role r : List.of(Role.ADMIN, Role.GENERAL_MANAGER, Role.MANAGER)) assertTrue(allows(e.rule(), person(r)), r.name());
+        }
+    }
+
+    @Test
     @DisplayName("every kind of staff can use their own attendance and leave screens (cashiers, captains and kitchen are staff too)")
     void everyKindOfStaffCanPunchIn() throws Exception {
         for (Role role : STAFF_ROLES) {
@@ -292,7 +307,7 @@ class EndpointAccessMatrixTest {
                 "AccountingController", "BankReconciliationController", "CampaignController", "ReportExportController",
                 "AnalyticsController", "MoneyReportsController", "OwnerDashboardController", "ExpenseController",
                 "CashierShiftController", "BillRefundController", "TelegramAdminController", "AuditController", "LoyaltyController",
-                "OutletController", "TenantController", "LeaveController");
+                "OutletController", "TenantController", "LeaveController", "ItemsSoldController");
         List<String> leaks = new ArrayList<>();
         for (Endpoint e : endpoints()) {
             String controller = e.key().substring(0, e.key().indexOf('#'));

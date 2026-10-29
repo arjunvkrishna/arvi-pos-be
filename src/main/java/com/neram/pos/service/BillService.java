@@ -1219,6 +1219,60 @@ public class BillService {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * Open orders that have been sent to the kitchen, oldest first, as slim tickets for the kitchen display. The branch limit of
+     * the caller applies as for any other bill query. No prices, totals or customer details leave here.
+     */
+    public List<com.neram.pos.dto.KitchenTicketDTO> getKitchenTickets() {
+        List<Bill.Status> sentToKitchen = List.of(Bill.Status.KOT_REQUESTED, Bill.Status.KOT_PRINTED);
+        return billRepository.findByStatusInOrderByCreatedAtAsc(sentToKitchen).stream()
+                .map(this::toDTO)
+                .filter(b -> b.getItems() != null && !b.getItems().isEmpty())
+                .map(b -> com.neram.pos.dto.KitchenTicketDTO.builder()
+                        .id(b.getId())
+                        .billNumber(b.getBillNumber())
+                        .orderType(b.getOrderType())
+                        .tableNumber(b.getTableNumber())
+                        .outdoorToken(b.getOutdoorToken())
+                        .takeawayToken(b.getTakeawayToken())
+                        .status(b.getStatus())
+                        .createdAt(b.getCreatedAt())
+                        .kotPrintedAt(b.getKotPrintedAt())
+                        .items(b.getItems().stream().map(i -> com.neram.pos.dto.KitchenTicketDTO.Line.builder()
+                                .name(i.getItemName())
+                                .quantity(i.getQuantity())
+                                .printedQuantity(i.getPrintedQuantity())
+                                .note(i.getCustomization())
+                                .extras(extraNames(i.getModifiersSnapshot(), i.getComboSnapshot()))
+                                .takeaway(i.getIsTakeaway())
+                                .build()).toList())
+                        .build())
+                .toList();
+    }
+
+    /** The names of the add-ons and combo choices on a line (their prices stay out of the kitchen's view). */
+    private List<String> extraNames(String modifiersSnapshot, String comboSnapshot) {
+        List<String> names = new java.util.ArrayList<>();
+        for (String snapshot : new String[]{modifiersSnapshot, comboSnapshot}) {
+            if (snapshot == null || snapshot.isBlank()) continue;
+            try {
+                com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(snapshot);
+                if (!root.isArray()) continue;
+                for (com.fasterxml.jackson.databind.JsonNode node : root) {
+                    for (String field : new String[]{"name", "itemName", "item_name", "menuItemName"}) {
+                        if (node.hasNonNull(field) && !node.get(field).asText().isBlank()) {
+                            names.add(node.get(field).asText());
+                            break;
+                        }
+                    }
+                }
+            } catch (Exception ignored) {
+                // a snapshot that cannot be read just shows no extras
+            }
+        }
+        return names;
+    }
+
     public BillResponseDTO getActiveOrderByTable(String tableNumber) {
         List<Bill.Status> activeStatuses = List.of(Bill.Status.ACTIVE, Bill.Status.KOT_REQUESTED, Bill.Status.KOT_PRINTED, Bill.Status.BILL_REQUESTED, Bill.Status.BILL_PRINTED);
         return billRepository.findFirstByTableNumberAndStatusInOrderByCreatedAtDesc(tableNumber, activeStatuses)

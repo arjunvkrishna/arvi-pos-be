@@ -179,9 +179,12 @@ public class BillController {
         return ResponseEntity.ok(idempotentOrders.save(idempotencyKey, request));
     }
 
-    /** SSE signal ("orders-changed") replacing the 3s polling of /tables and /bills/active. Same access rule as /active. */
+    /**
+     * SSE signal ("orders-changed") replacing the 3s polling of /tables and /bills/active. Same access rule as /active, plus the
+     * kitchen role: the signal carries no data, the kitchen display then reads /api/kitchen/tickets.
+     */
     @GetMapping(value = "/stream", produces = org.springframework.http.MediaType.TEXT_EVENT_STREAM_VALUE)
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER') or hasAuthority('PERM_TAKE_ORDERS')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'KITCHEN') or hasAuthority('PERM_TAKE_ORDERS')")
     public ResponseEntity<org.springframework.web.servlet.mvc.method.annotation.SseEmitter> streamOrderChanges(org.springframework.security.core.Authentication auth) {
         org.springframework.web.servlet.mvc.method.annotation.SseEmitter emitter =
                 notificationStreamService.subscribe(auth.getName(), com.neram.pos.service.NotificationStreamService.ORDERS_EVENT);
