@@ -47,6 +47,7 @@ public class BillService {
     private final UserRepository userRepository;
     private final com.neram.pos.repository.MenuItemRepository menuItemRepository;
     private final MenuBranchService menuBranchService;
+    private final com.neram.pos.plan.PlanService planService;
     private final AuditLogService auditLogService;
     private final GstSettingService gstSettingService;
     private final CashierShiftService cashierShiftService;
@@ -1745,6 +1746,7 @@ public class BillService {
         }
 
         if (dto != null && dto.getCouponCode() != null && !dto.getCouponCode().isBlank()) {
+            planService.require(com.neram.pos.plan.Feature.CRM);
             BigDecimal couponDisc = couponService.applyCouponSafely(dto.getCouponCode(), bill.getCustomerId(), bill.getId(), bill.getSubtotal());
             bill.setCouponDiscount(couponDisc);
         }
@@ -1792,6 +1794,7 @@ public class BillService {
 
         // 1. Gift card redemption
         if (bill.getPaymentMode() == Bill.PaymentMode.GIFT_CARD) {
+            planService.require(com.neram.pos.plan.Feature.CRM);
             String gcCode = dto != null && dto.getGiftCardCode() != null ? dto.getGiftCardCode().trim() : null;
             if (gcCode == null || gcCode.isBlank()) {
                 throw new IllegalArgumentException("Gift card code is required for GIFT_CARD payment.");
@@ -1800,6 +1803,7 @@ public class BillService {
         } else if (parts != null) {
             for (BillRequestDTO.PaymentPart p : parts) {
                 if ("GIFT_CARD".equalsIgnoreCase(p.getMode()) && p.getAmount() != null && p.getAmount().signum() > 0) {
+                    planService.require(com.neram.pos.plan.Feature.CRM);
                     String code = p.getReference() != null && !p.getReference().isBlank() ? p.getReference().trim() : (dto != null && dto.getGiftCardCode() != null ? dto.getGiftCardCode().trim() : null);
                     if (code == null || code.isBlank()) {
                         throw new IllegalArgumentException("Gift card code is required for GIFT_CARD payment.");
@@ -1811,6 +1815,7 @@ public class BillService {
 
         // 2. Loyalty points redemption
         if (bill.getPaymentMode() == Bill.PaymentMode.LOYALTY_POINTS) {
+            planService.require(com.neram.pos.plan.Feature.CRM);
             if (bill.getCustomerId() == null) {
                 throw new IllegalArgumentException("Customer profile is required for LOYALTY_POINTS payment.");
             }
@@ -1819,6 +1824,7 @@ public class BillService {
         } else if (parts != null) {
             for (BillRequestDTO.PaymentPart p : parts) {
                 if ("LOYALTY_POINTS".equalsIgnoreCase(p.getMode()) && p.getAmount() != null && p.getAmount().signum() > 0) {
+                    planService.require(com.neram.pos.plan.Feature.CRM);
                     if (bill.getCustomerId() == null) {
                         throw new IllegalArgumentException("Customer profile is required for LOYALTY_POINTS payment.");
                     }
@@ -1826,6 +1832,7 @@ public class BillService {
                 }
             }
         } else if (dto != null && dto.getRedeemLoyaltyPoints() != null && dto.getRedeemLoyaltyPoints() > 0) {
+            planService.require(com.neram.pos.plan.Feature.CRM);
             if (bill.getCustomerId() == null) {
                 throw new IllegalArgumentException("Customer profile is required for LOYALTY_POINTS redemption.");
             }

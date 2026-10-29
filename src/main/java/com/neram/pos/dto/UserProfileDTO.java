@@ -31,6 +31,7 @@ public class UserProfileDTO {
     private Boolean canManageMenu;
     private Boolean canManageSettings;
     private LocalDateTime accountCreatedAt;
+    private com.neram.pos.plan.PlanInfoDTO plan;
 
     // Linked Employee Details (if any)
     private Long employeeId;

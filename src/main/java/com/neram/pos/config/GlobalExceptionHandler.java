@@ -251,6 +251,20 @@ public class GlobalExceptionHandler {
         return handleRuntimeException(e, null);
     }
 
+    /** A module the cafe's plan does not include: 403 with a code and the plan that has it, so screens can say so plainly. */
+    @ExceptionHandler(com.neram.pos.plan.PlanFeatureException.class)
+    public ResponseEntity<Map<String, Object>> handlePlanFeature(com.neram.pos.plan.PlanFeatureException e, HttpServletRequest request) {
+        log.info("Plan gate [method={}, path={}, feature={}, plan={}]", getMethod(request), getPath(request), e.feature(), e.currentPlan());
+        ResponseEntity<Map<String, Object>> response = buildResponse(HttpStatus.FORBIDDEN, e.getMessage(), request, null);
+        Map<String, Object> body = response.getBody();
+        if (body != null) {
+            body.put("code", "PLAN_FEATURE");
+            body.put("feature", e.feature().name());
+            body.put("requiredPlan", e.feature().minPlan().name());
+        }
+        return response;
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleGenericException(Exception e, HttpServletRequest request) {
         String traceId = getTraceId();

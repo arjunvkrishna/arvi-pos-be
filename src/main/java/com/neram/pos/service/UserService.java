@@ -29,6 +29,7 @@ public class UserService {
     private final PasswordEncoder passwordEncoder;
     private final AuditLogService auditLogService;
     private final RefreshTokenService refreshTokenService;
+    private final com.neram.pos.plan.PlanService planService;
 
     /**
      * Get users visible to the caller based on their role:
@@ -123,6 +124,7 @@ public class UserService {
         if (userRepository.existsByUsername(dto.getUsername())) {
             throw new RuntimeException("Username already exists: " + dto.getUsername());
         }
+        assertLoginAvailable();
 
         Long assignedOutletId = dto.getOutletId();
 
@@ -240,6 +242,15 @@ public class UserService {
         return refreshToken;
     }
 
+    /** The plan allows only so many active logins (the owner counts as one). Existing logins are never removed; adding one more is refused. */
+    private void assertLoginAvailable() {
+        int max = planService.maxLogins();
+        if (userRepository.countActiveLogins() >= max) {
+            throw new IllegalStateException("Your " + planService.currentPlan() + " plan allows " + max
+                    + " staff logins and all of them are in use. Deactivate a login you no longer need, or ask your administrator to move to a bigger plan.");
+        }
+    }
+
     /**
      * Toggle active status of a user.
      * - ADMIN: can toggle any non-self user
@@ -258,6 +269,9 @@ public class UserService {
         }
 
         assertCanManage(user, callerRole);
+        if (!Boolean.TRUE.equals(user.getActive())) {
+            assertLoginAvailable();
+        }
 
         user.setActive(!user.getActive());
         user.setUpdatedAt(LocalDateTime.now());
@@ -405,6 +419,7 @@ public class UserService {
                 .outletName(outletName)
                 .cafeLogoUrl(logoUrl)
                 .accountCreatedAt(user.getCreatedAt())
+                .plan(planService.summary())
                 .employeeId(emp != null ? emp.getId() : null)
                 .employeeName(emp != null ? emp.getName() : user.getUsername())
                 .phone(emp != null ? emp.getPhone() : null)

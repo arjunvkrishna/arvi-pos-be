@@ -20,6 +20,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/documents")
 @RequiredArgsConstructor
+@com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.DOCUMENTS)
 public class DocumentController {
 
     private final DocumentService documentService;

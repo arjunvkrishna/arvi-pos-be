@@ -47,7 +47,7 @@ class AuthServiceTenantTest {
         refreshTokens = mock(RefreshTokenService.class);
         users = mock(UserRepository.class);
         service = new AuthService(authManager, jwt, users, mock(EmployeeRepository.class), mock(AuditLogService.class),
-                refreshTokens, mock(TenantRepository.class), mock(OutletRepository.class), mock(LoginAttemptService.class), registry, platform);
+                refreshTokens, mock(TenantRepository.class), mock(OutletRepository.class), mock(LoginAttemptService.class), registry, platform, mock(com.neram.pos.plan.PlanService.class));
     }
 
     private static TenantRecord cafe(String status) {

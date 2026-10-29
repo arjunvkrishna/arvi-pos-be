@@ -39,6 +39,7 @@ class TimedCafeJobsTest {
     private DailyCloseService dailyClose;
     private TenantRegistry registry;
     private TaskScheduler scheduler;
+    private com.neram.pos.plan.PlanService plans;
     private TimedCafeJobs jobs;
 
     @BeforeEach
@@ -48,8 +49,10 @@ class TimedCafeJobsTest {
         dailyClose = mock(DailyCloseService.class);
         registry = mock(TenantRegistry.class);
         scheduler = mock(TaskScheduler.class);
+        plans = mock(com.neram.pos.plan.PlanService.class);
+        when(plans.has(com.neram.pos.plan.Feature.TELEGRAM)).thenReturn(true);
         when(scheduler.schedule(any(Runnable.class), any(Trigger.class))).thenAnswer(i -> mock(ScheduledFuture.class));
-        jobs = new TimedCafeJobs(telegramSettings, telegram, dailyClose, registry, new TenantExecutor(registry), scheduler, null);
+        jobs = new TimedCafeJobs(telegramSettings, telegram, dailyClose, registry, new TenantExecutor(registry), plans, scheduler, null);
     }
 
     @AfterEach
@@ -215,6 +218,29 @@ class TimedCafeJobsTest {
         when(telegramSettings.getSettings()).thenReturn(Optional.of(telegramAt(true, "09:00", "Asia/Kolkata")));
         when(dailyClose.getSettings()).thenReturn(new MoneyReportsDTO.DailyCloseSettings(false, "23:30"));
         TenantContext.runAs(blue, () -> jobs.onChanged(new TimedCafeJobs.Changed()));
+        assertEquals("09:00@Asia/Kolkata", jobs.bookings().get("bluedoor|telegram-report"));
+    }
+
+    @Test
+    void aPlanWithoutTelegramBooksNeitherTheReportNorTheDailyClose() {
+        when(plans.has(com.neram.pos.plan.Feature.TELEGRAM)).thenReturn(false);
+        when(telegramSettings.getSettings()).thenReturn(Optional.of(telegramAt(true, "09:00", "Asia/Kolkata")));
+        when(dailyClose.getSettings()).thenReturn(new MoneyReportsDTO.DailyCloseSettings(true, "23:30"));
+        refresh(blue);
+        assertTrue(jobs.bookings().isEmpty());
+        verify(scheduler, never()).schedule(any(Runnable.class), any(Trigger.class));
+    }
+
+    @Test
+    void upgradingToAPlanWithTelegramBooksThemOnTheNextLook() {
+        when(plans.has(com.neram.pos.plan.Feature.TELEGRAM)).thenReturn(false);
+        when(telegramSettings.getSettings()).thenReturn(Optional.of(telegramAt(true, "09:00", "Asia/Kolkata")));
+        when(dailyClose.getSettings()).thenReturn(new MoneyReportsDTO.DailyCloseSettings(false, "23:30"));
+        refresh(blue);
+        assertTrue(jobs.bookings().isEmpty());
+
+        when(plans.has(com.neram.pos.plan.Feature.TELEGRAM)).thenReturn(true);
+        refresh(blue);
         assertEquals("09:00@Asia/Kolkata", jobs.bookings().get("bluedoor|telegram-report"));
     }
 }

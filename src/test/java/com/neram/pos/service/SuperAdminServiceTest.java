@@ -190,4 +190,36 @@ class SuperAdminServiceTest {
         when(registry.findById(404L)).thenReturn(Optional.empty());
         assertThrows(NoSuchElementException.class, () -> service.getCafe(404L));
     }
+
+    @Test
+    void movingToAnotherPlanBringsThatPlansBranchCount() {
+        when(registry.findById(5L)).thenReturn(Optional.of(cafe(5, "bluedoor", "ACTIVE")));   // PRO, 5 branches
+
+        service.updateCafe(5L, Map.of("subscriptionPlan", "starter"), "root");
+        verify(registry).updateProfile(eq(5L), anyString(), any(), any(), any(), eq("STARTER"), eq(1));
+
+        service.updateCafe(5L, Map.of("subscriptionPlan", "ENTERPRISE"), "root");
+        verify(registry).updateProfile(eq(5L), anyString(), any(), any(), any(), eq("ENTERPRISE"), eq(com.neram.pos.plan.Plan.UNLIMITED));
+    }
+
+    @Test
+    void aBranchCountNamedWithThePlanChangeIsKept() {
+        when(registry.findById(5L)).thenReturn(Optional.of(cafe(5, "bluedoor", "ACTIVE")));
+        service.updateCafe(5L, Map.of("subscriptionPlan", "STARTER", "maxOutlets", 2), "root");
+        verify(registry).updateProfile(eq(5L), anyString(), any(), any(), any(), eq("STARTER"), eq(2));
+    }
+
+    @Test
+    void savingWithoutChangingThePlanLeavesTheBranchCountAlone() {
+        when(registry.findById(5L)).thenReturn(Optional.of(cafe(5, "bluedoor", "ACTIVE")));
+        service.updateCafe(5L, Map.of("name", "Renamed", "subscriptionPlan", "PRO"), "root");
+        verify(registry).updateProfile(eq(5L), eq("Renamed"), any(), any(), any(), eq("PRO"), eq(5));
+    }
+
+    @Test
+    void aPlanThatDoesNotExistIsRefusedAndNothingIsSaved() {
+        when(registry.findById(5L)).thenReturn(Optional.of(cafe(5, "bluedoor", "ACTIVE")));
+        assertThrows(IllegalArgumentException.class, () -> service.updateCafe(5L, Map.of("subscriptionPlan", "GOLD"), "root"));
+        verify(registry, never()).updateProfile(anyLong(), any(), any(), any(), any(), any(), anyInt());
+    }
 }

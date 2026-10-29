@@ -16,6 +16,7 @@ import java.util.UUID;
 @RequestMapping("/api/reports")
 @RequiredArgsConstructor
 @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+@com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.EXPORTS)
 public class ReportExportController {
 
     private final ReportExportService reportExportService;

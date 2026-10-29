@@ -13,6 +13,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/loyalty")
 @RequiredArgsConstructor
+@com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.CRM)
 public class LoyaltyController {
 
     private final LoyaltySettingsService settings;

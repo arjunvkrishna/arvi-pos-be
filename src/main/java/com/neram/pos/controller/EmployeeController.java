@@ -16,6 +16,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/employees")
 @RequiredArgsConstructor
+@com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.STAFF_PAYROLL)
 public class EmployeeController {
 
     private final EmployeeService employeeService;

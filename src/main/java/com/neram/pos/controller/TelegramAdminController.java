@@ -16,6 +16,7 @@ import java.util.Map;
 @RequestMapping("/api/admin/telegram")
 @PreAuthorize("hasAuthority('PERM_MANAGE_SETTINGS')")
 @RequiredArgsConstructor
+@com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.TELEGRAM)
 public class TelegramAdminController {
 
     private final TelegramNotificationService notificationService;

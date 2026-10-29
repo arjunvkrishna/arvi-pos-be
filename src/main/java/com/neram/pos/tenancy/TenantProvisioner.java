@@ -35,6 +35,8 @@ public class TenantProvisioner {
 
     public TenantRecord provision(CreateCafeRequest req, String actor) {
         validate(req);
+        com.neram.pos.plan.Plan plan = req.getSubscriptionPlan() == null || req.getSubscriptionPlan().isBlank()
+                ? com.neram.pos.plan.Plan.PRO : com.neram.pos.plan.Plan.parse(req.getSubscriptionPlan());
         String code = chooseCode(req);
 
         String dbName = TenantDatabaseAdmin.databaseNameFor(code, null);
@@ -52,8 +54,8 @@ public class TenantProvisioner {
         // Credentials are stored (encrypted) before anything is created, so they can never be lost if we crash midway.
         TenantRecord record = registry.insert(new TenantRegistry.NewTenant(
                 code, req.getName().trim(),
-                req.getSubscriptionPlan() != null ? req.getSubscriptionPlan() : "PRO",
-                req.getMaxOutlets() != null && req.getMaxOutlets() > 0 ? req.getMaxOutlets() : 5,
+                plan.name(),
+                req.getMaxOutlets() != null && req.getMaxOutlets() > 0 ? req.getMaxOutlets() : plan.defaultBranches(),
                 req.getContactEmail(), req.getContactPhone(), req.getAddress(),
                 dbAdmin.targetHost(), dbAdmin.targetPort(), dbName, role,
                 crypto.encrypt(dbPassword, TenantCrypto.purpose(code, PWD_FIELD)),

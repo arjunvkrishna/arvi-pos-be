@@ -15,5 +15,9 @@ public interface UserRepository extends JpaRepository<User, Long> {
     java.util.List<User> findByRoleInAndActiveTrue(java.util.List<User.Role> roles);
     org.springframework.data.domain.Page<User> findByRoleInAndActiveTrue(java.util.List<User.Role> roles, org.springframework.data.domain.Pageable pageable);
     boolean existsByRole(User.Role role);
+
+    /** Every active login in the cafe. Native on purpose: the branch filter must not hide other branches' people from a plan limit. */
+    @org.springframework.data.jpa.repository.Query(value = "SELECT count(*) FROM users WHERE active = TRUE", nativeQuery = true)
+    long countActiveLogins();
     org.springframework.data.domain.Page<User> findByRoleNot(User.Role role, org.springframework.data.domain.Pageable pageable);
 }

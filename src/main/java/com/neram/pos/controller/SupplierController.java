@@ -17,6 +17,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/suppliers")
 @RequiredArgsConstructor
+@com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.SUPPLIERS_EXPENSES)
 public class SupplierController {
 
     private final SupplierService supplierService;

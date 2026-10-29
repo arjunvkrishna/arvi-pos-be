@@ -31,4 +31,5 @@ public class LoginResponse {
     private String outletName;
     private String outletCode;
     private String message;
+    private com.neram.pos.plan.PlanInfoDTO plan;
 }

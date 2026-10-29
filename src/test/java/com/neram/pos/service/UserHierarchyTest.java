@@ -28,6 +28,7 @@ class UserHierarchyTest {
     private UserRepository users;
     private TenantSecurityService security;
     private UserService service;
+    private com.neram.pos.plan.PlanService plans;
 
     private User owner, gm, mgr1, mgr2, cashier1, cashier2;
 
@@ -46,10 +47,13 @@ class UserHierarchyTest {
     void setUp() {
         users = mock(UserRepository.class);
         security = mock(TenantSecurityService.class);
+        plans = mock(com.neram.pos.plan.PlanService.class);
+        when(plans.maxLogins()).thenReturn(25);
+        when(plans.currentPlan()).thenReturn(com.neram.pos.plan.Plan.PRO);
         PasswordEncoder encoder = mock(PasswordEncoder.class);
         when(encoder.encode(any())).thenReturn("hash");
         service = new UserService(users, mock(EmployeeRepository.class), mock(TenantRepository.class),
-                mock(OutletRepository.class), security, encoder, mock(AuditLogService.class), mock(RefreshTokenService.class));
+                mock(OutletRepository.class), security, encoder, mock(AuditLogService.class), mock(RefreshTokenService.class), plans);
         when(security.resolveTenantId(any())).thenReturn(1L);
         owner = user(1, "owner", Role.ADMIN, 1L);
         gm = user(2, "gm", Role.GENERAL_MANAGER, null);
@@ -192,5 +196,47 @@ class UserHierarchyTest {
         UserDTO created = service.createUser(dto, "GENERAL_MANAGER");
 
         assertTrue(created.getCanManageMenu());
+    }
+
+    private CreateUserRequestDTO newStaff(String name) {
+        CreateUserRequestDTO dto = new CreateUserRequestDTO();
+        dto.setUsername(name);
+        dto.setPassword("Secret@12345");
+        dto.setRole("CASHIER");
+        dto.setOutletId(1L);
+        return dto;
+    }
+
+    @Test
+    void aPlanOnlyAllowsSoManyLoginsAndTheNextOneIsRefusedWithAPlainReason() {
+        actingAs(owner);
+        when(plans.maxLogins()).thenReturn(5);
+        when(plans.currentPlan()).thenReturn(com.neram.pos.plan.Plan.STARTER);
+        when(users.countActiveLogins()).thenReturn(4L);
+        assertDoesNotThrow(() -> service.createUser(newStaff("fifth"), "ADMIN"));
+
+        when(users.countActiveLogins()).thenReturn(5L);
+        IllegalStateException e = assertThrows(IllegalStateException.class, () -> service.createUser(newStaff("sixth"), "ADMIN"));
+        assertTrue(e.getMessage().contains("STARTER") && e.getMessage().contains("5"), e.getMessage());
+    }
+
+    @Test
+    void anUnlimitedPlanNeverRunsOut() {
+        actingAs(owner);
+        when(plans.maxLogins()).thenReturn(com.neram.pos.plan.Plan.UNLIMITED);
+        when(users.countActiveLogins()).thenReturn(300L);
+        assertDoesNotThrow(() -> service.createUser(newStaff("many"), "ADMIN"));
+    }
+
+    @Test
+    void switchingAnOldLoginBackOnCountsAgainstTheLimitButSwitchingOneOffDoesNot() {
+        actingAs(owner);
+        cashier1.setActive(false);
+        when(plans.maxLogins()).thenReturn(5);
+        when(users.countActiveLogins()).thenReturn(5L);
+        assertThrows(IllegalStateException.class, () -> service.toggleUserActive(5L, "ADMIN", "owner"));
+
+        cashier1.setActive(true);
+        assertDoesNotThrow(() -> service.toggleUserActive(5L, "ADMIN", "owner"));   // deactivating is always allowed
     }
 }

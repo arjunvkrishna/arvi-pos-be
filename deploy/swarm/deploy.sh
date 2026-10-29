@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Installs or updates ARVI POS on this Docker Swarm node. Safe to run again.
-#   ARVI_VERSION   image tag to run (default 3.0.2)       WEB_PORT   public port (default 80)
+#   ARVI_VERSION   image tag to run (default 3.0.3)       WEB_PORT   public port (default 80)
 #   PUBLIC_URL     address people type in the browser, e.g. http://1.2.3.4 (comma-separated for several). Sign-in is
 #                  refused from any other address, so change it here when a domain is added.   STACK   stack name (default arvi)
 set -euo pipefail
@@ -12,7 +12,7 @@ if [ -f .env ]; then
     [ -n "${!key+x}" ] || export "$key=$value"
   done < .env
 fi
-export ARVI_VERSION="${ARVI_VERSION:-3.0.2}" WEB_PORT="${WEB_PORT:-80}" STACK="${STACK:-arvi}"
+export ARVI_VERSION="${ARVI_VERSION:-3.0.3}" WEB_PORT="${WEB_PORT:-80}" STACK="${STACK:-arvi}"
 export PUBLIC_URL="${PUBLIC_URL:-*}"
 
 for image in "arvi-backend:$ARVI_VERSION" "arvi-ui:$ARVI_VERSION"; do

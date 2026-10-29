@@ -39,6 +39,7 @@ public class AuthService {
 
     private final TenantRegistry tenantRegistry;
     private final PlatformAdminService platformAdminService;
+    private final com.neram.pos.plan.PlanService planService;
     private final PlatformLoginThrottle platformThrottle = new PlatformLoginThrottle();
 
     /**
@@ -209,6 +210,7 @@ public class AuthService {
                 .outletId(user.getOutletId())
                 .outletName(outletName)
                 .outletCode(outletCode)
+                .plan(planService.summary())
                 .message(message)
                 .build();
     }

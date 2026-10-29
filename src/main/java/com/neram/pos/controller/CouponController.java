@@ -12,6 +12,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/coupons")
 @RequiredArgsConstructor
+@com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.CRM)
 public class CouponController {
 
     private final CouponService couponService;

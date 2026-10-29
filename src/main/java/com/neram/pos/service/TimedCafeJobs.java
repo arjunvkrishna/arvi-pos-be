@@ -58,29 +58,31 @@ public class TimedCafeJobs {
     private final DailyCloseService dailyClose;
     private final TenantRegistry registry;
     private final TenantExecutor tenantExecutor;
+    private final com.neram.pos.plan.PlanService plans;
     private final TaskScheduler scheduler;
     private final ThreadPoolTaskScheduler ownScheduler;
     private final Map<String, Booked> booked = new ConcurrentHashMap<>();
 
     @Autowired
     public TimedCafeJobs(TelegramSettingRepository telegramSettings, TelegramNotificationService telegram, DailyCloseService dailyClose,
-                         TenantRegistry registry, TenantExecutor tenantExecutor) {
-        this(telegramSettings, telegram, dailyClose, registry, tenantExecutor, newScheduler());
+                         TenantRegistry registry, TenantExecutor tenantExecutor, com.neram.pos.plan.PlanService plans) {
+        this(telegramSettings, telegram, dailyClose, registry, tenantExecutor, plans, newScheduler());
     }
 
     private TimedCafeJobs(TelegramSettingRepository telegramSettings, TelegramNotificationService telegram, DailyCloseService dailyClose,
-                          TenantRegistry registry, TenantExecutor tenantExecutor, ThreadPoolTaskScheduler own) {
-        this(telegramSettings, telegram, dailyClose, registry, tenantExecutor, own, own);
+                          TenantRegistry registry, TenantExecutor tenantExecutor, com.neram.pos.plan.PlanService plans, ThreadPoolTaskScheduler own) {
+        this(telegramSettings, telegram, dailyClose, registry, tenantExecutor, plans, own, own);
     }
 
     /** For tests: a scheduler that books triggers without ever running them. */
     TimedCafeJobs(TelegramSettingRepository telegramSettings, TelegramNotificationService telegram, DailyCloseService dailyClose,
-                  TenantRegistry registry, TenantExecutor tenantExecutor, TaskScheduler scheduler, ThreadPoolTaskScheduler own) {
+                  TenantRegistry registry, TenantExecutor tenantExecutor, com.neram.pos.plan.PlanService plans, TaskScheduler scheduler, ThreadPoolTaskScheduler own) {
         this.telegramSettings = telegramSettings;
         this.telegram = telegram;
         this.dailyClose = dailyClose;
         this.registry = registry;
         this.tenantExecutor = tenantExecutor;
+        this.plans = plans;
         this.scheduler = scheduler;
         this.ownScheduler = own;
     }
@@ -127,14 +129,15 @@ public class TimedCafeJobs {
     /** Books (or re-books, or cancels) the current cafe's two jobs from its saved settings. */
     void refreshCurrent() {
         TenantInfo tenant = TenantContext.require();
+        boolean telegramInPlan = plans.has(com.neram.pos.plan.Feature.TELEGRAM);
         Optional<TelegramSetting> tg = telegramSettings.getSettings();
         ZoneId zone = zoneOf(tg.map(TelegramSetting::getTimezone).orElse(null));
 
-        String reportTime = tg.filter(s -> Boolean.TRUE.equals(s.getEnabled())).map(TelegramSetting::getDailySendTime).orElse(null);
+        String reportTime = telegramInPlan ? tg.filter(s -> Boolean.TRUE.equals(s.getEnabled())).map(TelegramSetting::getDailySendTime).orElse(null) : null;
         book(tenant, TELEGRAM_REPORT, reportTime, zone, () -> telegram.executeDailyDispatch(false));
 
         var close = dailyClose.getSettings();
-        book(tenant, DAILY_CLOSE, close.isEnabled() ? close.getTime() : null, zone, dailyClose::sendIfDue);
+        book(tenant, DAILY_CLOSE, telegramInPlan && close.isEnabled() ? close.getTime() : null, zone, dailyClose::sendIfDue);
     }
 
     private void book(TenantInfo tenant, String job, String hhmm, ZoneId zone, Runnable task) {

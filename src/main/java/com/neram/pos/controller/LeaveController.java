@@ -16,6 +16,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/leaves")
 @RequiredArgsConstructor
+@com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.STAFF_PAYROLL)
 public class LeaveController {
 
     private final LeaveService leaveService;

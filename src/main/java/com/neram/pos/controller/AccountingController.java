@@ -13,6 +13,7 @@ import java.time.LocalDate;
 @RestController
 @RequestMapping("/api/accounting")
 @RequiredArgsConstructor
+@com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.ACCOUNTING)
 public class AccountingController {
 
     private final AccountingService accountingService;

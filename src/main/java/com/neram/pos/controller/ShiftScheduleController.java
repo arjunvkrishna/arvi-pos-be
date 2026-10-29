@@ -15,6 +15,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/shifts/schedules")
 @RequiredArgsConstructor
+@com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.SCHEDULING)
 public class ShiftScheduleController {
 
     private final ShiftScheduleService shiftScheduleService;

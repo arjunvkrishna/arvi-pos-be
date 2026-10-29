@@ -42,12 +42,14 @@ class UserServiceRbacAndProfileTest {
     @Mock private PasswordEncoder passwordEncoder;
     @Mock private AuditLogService auditLogService;
     @Mock private RefreshTokenService refreshTokenService;
+    @Mock private com.neram.pos.plan.PlanService planService;
 
     @InjectMocks
     private UserService userService;
 
     @BeforeEach
     void setUp() {
+        when(planService.maxLogins()).thenReturn(25);
         when(tenantSecurityService.resolveTenantId(any())).thenReturn(1L);
         when(userRepository.save(any(User.class))).thenAnswer(invocation -> {
             User u = invocation.getArgument(0);

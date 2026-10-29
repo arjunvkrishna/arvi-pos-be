@@ -16,6 +16,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api")
 @RequiredArgsConstructor
+@com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.CRM)
 public class CustomerController {
 
     private final CustomerService customerService;
@@ -63,6 +64,7 @@ public class CustomerController {
         return ResponseEntity.ok(customerService.updateCustomer(id, dto));
     }
 
+    @com.neram.pos.plan.OpenInEveryPlan
     @PostMapping("/public/{cafe}/customers/unsubscribe")
     public ResponseEntity<?> unsubscribe(@PathVariable String cafe, @RequestBody Map<String, String> body) {
         String token = body.get("token");

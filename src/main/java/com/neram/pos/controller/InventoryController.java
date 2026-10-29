@@ -43,6 +43,7 @@ public class InventoryController {
     }
 
     /** Stock that is expired or about to expire (?all=true lists every batch with an expiry), earliest first. */
+    @com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.STOCK_CONTROL)
     @GetMapping("/expiry")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER') or hasAuthority('PERM_MANAGE_INVENTORY')")
     public ResponseEntity<List<com.neram.pos.dto.ExpiryBatchDTO>> getExpiry(@RequestParam(defaultValue = "false") boolean all) {
@@ -50,6 +51,7 @@ public class InventoryController {
     }
 
     /** What to buy: items that are out, below their minimum or will run out within a week at the recent pace, with a suggested quantity and supplier. */
+    @com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.STOCK_CONTROL)
     @GetMapping("/reorder")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER') or hasAuthority('PERM_MANAGE_INVENTORY')")
     public ResponseEntity<com.neram.pos.dto.StockOpsDTO.Reorder> getReorder() {

@@ -19,6 +19,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/salaries")
 @RequiredArgsConstructor
+@com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.STAFF_PAYROLL)
 public class SalaryController {
 
     private final SalaryService salaryService;

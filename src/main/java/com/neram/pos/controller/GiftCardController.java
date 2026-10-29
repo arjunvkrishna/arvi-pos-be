@@ -21,6 +21,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api")
 @RequiredArgsConstructor
+@com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.CRM)
 public class GiftCardController {
 
     private final GiftCardService giftCardService;

@@ -14,6 +14,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/inventory/counts")
 @RequiredArgsConstructor
+@com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.STOCK_CONTROL)
 public class StockCountController {
 
     private final StockCountService service;

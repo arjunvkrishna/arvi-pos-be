@@ -19,6 +19,7 @@ import java.util.Map;
 @RequestMapping("/api/banking")
 @RequiredArgsConstructor
 @PreAuthorize("hasAuthority('PERM_MANAGE_SETTINGS')")
+@com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.ACCOUNTING)
 public class BankReconciliationController {
 
     private final BankReconciliationService reconciliationService;

@@ -20,6 +20,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/attendance")
 @RequiredArgsConstructor
+@com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.STAFF_PAYROLL)
 public class AttendanceController {
 
     private final AttendanceService attendanceService;

@@ -19,6 +19,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/audit-logs")
 @RequiredArgsConstructor
+@com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.AUDIT)
 public class AuditController {
 
     private final AuditLogService auditLogService;

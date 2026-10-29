@@ -15,6 +15,7 @@ import java.time.LocalDate;
 @RestController
 @RequestMapping("/api/shifts/tip-pool")
 @RequiredArgsConstructor
+@com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.SCHEDULING)
 public class TipPoolController {
 
     private final TipPoolService tipPoolService;

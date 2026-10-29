@@ -96,6 +96,7 @@ public class AnalyticsController {
         return ResponseEntity.ok(analyticsService.getComprehensiveProfitReport(startDate, endDate));
     }
 
+    @com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.EXPORTS)
     @GetMapping("/export/excel")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
     public ResponseEntity<byte[]> exportAnalyticsExcel(
@@ -112,6 +113,7 @@ public class AnalyticsController {
                 .body(excelBytes);
     }
 
+    @com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.EXPORTS)
     @GetMapping("/export/pdf")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
     public ResponseEntity<byte[]> exportAnalyticsPdf(

@@ -22,6 +22,8 @@ public class CafeSummaryDto {
     private String subscriptionPlan;
     private String status;
     private Integer maxOutlets;
+    /** Staff logins the plan allows. */
+    private Integer maxUsers;
     private String dbName;
     private String schemaVersion;
     private String lastError;

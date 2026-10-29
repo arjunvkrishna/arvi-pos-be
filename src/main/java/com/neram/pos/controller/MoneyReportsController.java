@@ -32,26 +32,31 @@ public class MoneyReportsController {
         return ResponseEntity.ok(dailyClose.build(date, LocalDate.now()));
     }
 
+    @com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.TELEGRAM)
     @PostMapping("/daily-close/send")
     public ResponseEntity<MoneyReportsDTO.SendResult> sendDailyClose(@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
         return ResponseEntity.ok(dailyClose.send(date, LocalDate.now()));
     }
 
+    @com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.TELEGRAM)
     @GetMapping("/daily-close/settings")
     public ResponseEntity<MoneyReportsDTO.DailyCloseSettings> dailyCloseSettings() { return ResponseEntity.ok(dailyClose.getSettings()); }
 
+    @com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.TELEGRAM)
     @PutMapping("/daily-close/settings")
     @PreAuthorize("hasAuthority('PERM_MANAGE_SETTINGS')")
     public ResponseEntity<MoneyReportsDTO.DailyCloseSettings> saveDailyCloseSettings(@RequestBody MoneyReportsDTO.DailyCloseSettings body, Authentication auth) {
         return ResponseEntity.ok(dailyClose.saveSettings(body, who(auth)));
     }
 
+    @com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.SUPPLIERS_EXPENSES)
     @GetMapping("/budget")
     public ResponseEntity<MoneyReportsDTO.Budget> budget(@RequestParam(required = false) Integer year, @RequestParam(required = false) Integer month) {
         LocalDate t = LocalDate.now();
         return ResponseEntity.ok(budget.report(year != null ? year : t.getYear(), month != null ? month : t.getMonthValue(), t));
     }
 
+    @com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.SUPPLIERS_EXPENSES)
     @PutMapping("/budget")
     @PreAuthorize("hasAuthority('PERM_MANAGE_SETTINGS')")
     public ResponseEntity<Void> setBudget(@RequestBody List<MoneyReportsDTO.BudgetUpdate> updates, Authentication auth) {
@@ -67,9 +72,11 @@ public class MoneyReportsController {
         return ResponseEntity.ok(staff.report(period, startDate, endDate, LocalDate.now()));
     }
 
+    @com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.STAFF_PAYROLL)
     @GetMapping("/tip-payouts")
     public ResponseEntity<List<MoneyReportsDTO.Payout>> payouts() { return ResponseEntity.ok(staff.recentPayouts()); }
 
+    @com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.STAFF_PAYROLL)
     @PostMapping("/tip-payouts")
     public ResponseEntity<MoneyReportsDTO.Payout> pay(@RequestBody MoneyReportsDTO.PayoutRequest body, Authentication auth) {
         return ResponseEntity.ok(staff.pay(body.getStaffId(), body.getAmount(), body.getNote(), who(auth), LocalDate.now()));

@@ -71,9 +71,15 @@ public class SuperAdminService {
         String email = text(updates, "contactEmail", t.contactEmail());
         String phone = text(updates, "contactPhone", t.contactPhone());
         String address = text(updates, "address", t.address());
-        String plan = text(updates, "subscriptionPlan", t.subscriptionPlan());
+        com.neram.pos.plan.Plan newPlan = updates.containsKey("subscriptionPlan")
+                ? com.neram.pos.plan.Plan.parse(String.valueOf(updates.get("subscriptionPlan")))
+                : com.neram.pos.plan.Plan.ofStored(t.subscriptionPlan());
+        String plan = newPlan.name();
+        // Moving to another plan brings that plan's branch count, unless the platform owner names a number of their own.
+        boolean planChanged = !plan.equals(t.subscriptionPlan());
         int maxOutlets = updates.containsKey("maxOutlets")
-                ? Integer.parseInt(String.valueOf(updates.get("maxOutlets"))) : t.maxOutlets();
+                ? Integer.parseInt(String.valueOf(updates.get("maxOutlets")))
+                : planChanged ? newPlan.defaultBranches() : t.maxOutlets();
         if (maxOutlets < 1) {
             throw new IllegalArgumentException("maxOutlets must be at least 1");
         }
@@ -189,7 +195,7 @@ public class SuperAdminService {
                 // request's open-in-view session, which stays on the first cafe it touched (every cafe then shows the first one's counts).
                 // JdbcTemplate takes a fresh, correctly routed connection for each call.
                 Long outlets = jdbcTemplate.queryForObject("SELECT count(*) FROM outlets", Long.class);
-                Long users = jdbcTemplate.queryForObject("SELECT count(*) FROM users", Long.class);
+                Long users = jdbcTemplate.queryForObject("SELECT count(*) FROM users WHERE active = TRUE", Long.class);
                 Long bills = jdbcTemplate.queryForObject(
                         "SELECT count(*) FROM bills WHERE status = 'PAID'", Long.class);
                 BigDecimal gmv = jdbcTemplate.queryForObject(
@@ -214,6 +220,7 @@ public class SuperAdminService {
                 .subscriptionPlan(t.subscriptionPlan())
                 .status(t.status())
                 .maxOutlets(t.maxOutlets())
+                .maxUsers(com.neram.pos.plan.Plan.ofStored(t.subscriptionPlan()).maxLogins())
                 .dbName(t.dbName())
                 .schemaVersion(t.schemaVersion())
                 .lastError(t.lastError())

@@ -175,4 +175,42 @@ class TenantProvisionerTest {
         assertEquals("a-b", TenantProvisioner.normalise("A__B"));
         assertTrue(TenantProvisioner.normalise("x".repeat(60)).length() <= 30);
     }
+
+    private TenantRegistry.NewTenant provisionedWith(String plan, Integer maxOutlets) throws Exception {
+        clearInvocations(registry);
+        CreateCafeRequest r = request("Blue Door", "bluedoor");
+        r.setSubscriptionPlan(plan);
+        r.setMaxOutlets(maxOutlets);
+        ArgumentCaptor<TenantRegistry.NewTenant> stored = ArgumentCaptor.forClass(TenantRegistry.NewTenant.class);
+        provisioner.provision(r, "superadmin");
+        verify(registry).insert(stored.capture());
+        return stored.getValue();
+    }
+
+    @Test
+    void aNewCafeGetsTheBranchCountOfItsPlanUnlessOneIsNamed() throws Exception {
+        assertEquals(1, provisionedWith("STARTER", null).maxOutlets());
+        assertEquals("STARTER", provisionedWith("starter", null).subscriptionPlan());
+    }
+
+    @Test
+    void aCafeWithNoPlanNamedStartsOnProWithFiveBranches() throws Exception {
+        TenantRegistry.NewTenant t = provisionedWith(null, null);
+        assertEquals("PRO", t.subscriptionPlan());
+        assertEquals(5, t.maxOutlets());
+    }
+
+    @Test
+    void anExplicitBranchCountWinsOverThePlanDefault() throws Exception {
+        assertEquals(3, provisionedWith("STARTER", 3).maxOutlets());
+    }
+
+    @Test
+    void aPlanThatDoesNotExistIsRefusedBeforeAnythingIsCreated() throws Exception {
+        CreateCafeRequest r = request("Blue Door", "bluedoor");
+        r.setSubscriptionPlan("GOLD");
+        assertThrows(IllegalArgumentException.class, () -> provisioner.provision(r, "superadmin"));
+        verify(registry, never()).insert(any());
+        verify(dbAdmin, never()).createRoleAndDatabase(anyString(), anyString(), anyString());
+    }
 }

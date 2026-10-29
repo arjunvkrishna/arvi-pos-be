@@ -13,6 +13,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/campaigns")
 @RequiredArgsConstructor
+@com.neram.pos.plan.RequiresFeature(com.neram.pos.plan.Feature.CAMPAIGNS)
 public class CampaignController {
 
     private final CampaignService campaignService;
