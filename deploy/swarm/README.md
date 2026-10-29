@@ -9,9 +9,9 @@ Three services on one node: `db` (PostgreSQL 18, one database per cafe plus the 
 
    ```bash
    # on your machine, from the backend and UI repositories
-   docker build -t arvi-backend:3.0.0 .          # in arvi-pos-be
-   docker build -t arvi-ui:3.0.0 .               # in arvi-pos-ui
-   docker save arvi-backend:3.0.0 arvi-ui:3.0.0 | gzip | ssh <node> 'gunzip | docker load'
+   docker build -t arvi-backend:3.0.1 .          # in arvi-pos-be
+   docker build -t arvi-ui:3.0.1 .               # in arvi-pos-ui
+   docker save arvi-backend:3.0.1 arvi-ui:3.0.1 | gzip | ssh <node> 'gunzip | docker load'
    ```
 
 2. Copy this folder to the node and run it:
@@ -33,6 +33,9 @@ Load the new images with a new tag, then `ARVI_VERSION=<tag> ./deploy.sh`. The b
 on start (every cafe, in parallel; a cafe that fails is flagged and does not block the rest). One copy of each service runs at a time.
 
 ## What matters
+
+* **Every password the app uses is a Docker secret** (`docker secret ls`); no service has one in its environment. `deploy.sh` also writes
+  nothing else: for your own reference keep a private `credentials.env` next to the stack with the same values (never commit it).
 
 * **`secrets/arvi_tenant_secret_key` must be kept somewhere else too.** The cafes' database passwords are stored encrypted with it;
   without it a restored database cannot be opened.

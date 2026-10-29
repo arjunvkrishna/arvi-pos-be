@@ -5,7 +5,10 @@ spring:
 
   jpa:
     mapping-resources: META-INF/orm.xml
+    # Kept on purpose, although Hibernate says it could work this out: with no cafe selected at boot there is no connection to ask.
     database-platform: org.hibernate.dialect.PostgreSQLDialect
+    # The app was built around one session per request (cafe and branch scoping rely on it); stated so Boot does not warn about the default.
+    open-in-view: true
     hibernate:
       ddl-auto: none
     show-sql: false
@@ -146,5 +149,8 @@ logging:
     root: ${LOG_LEVEL_ROOT:INFO}
     com.neram: ${LOG_LEVEL_APP:INFO}
     org.springframework.security: WARN
+    # Two start-up notices that describe choices made on purpose (an explicit dialect; our own AuthenticationProvider next to the UserDetailsService)
+    org.hibernate.orm.deprecation: ERROR
+    org.springframework.security.config.annotation.authentication.configuration.InitializeUserDetailsBeanManagerConfigurer: ERROR
     org.flywaydb: INFO
     org.hibernate.SQL: ${LOG_LEVEL_SQL:WARN}
