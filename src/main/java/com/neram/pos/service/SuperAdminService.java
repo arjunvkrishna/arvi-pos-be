@@ -2,8 +2,6 @@ package com.neram.pos.service;
 
 import com.neram.pos.dto.CafeSummaryDto;
 import com.neram.pos.dto.CreateCafeRequest;
-import com.neram.pos.repository.OutletRepository;
-import com.neram.pos.repository.UserRepository;
 import com.neram.pos.tenancy.TenantContext;
 import com.neram.pos.tenancy.TenantCrypto;
 import com.neram.pos.tenancy.TenantDatabaseAdmin;
@@ -39,8 +37,6 @@ public class SuperAdminService {
     private final TenantCrypto crypto;
     private final TenantDatabaseAdmin dbAdmin;
     private final TenantRoutingDataSource routing;
-    private final OutletRepository outletRepository;
-    private final UserRepository userRepository;
     private final JdbcTemplate jdbcTemplate;
 
     public List<CafeSummaryDto> getAllCafes() {
@@ -189,13 +185,16 @@ public class SuperAdminService {
     private Stats statsFor(TenantRecord t) {
         try {
             return TenantContext.callAs(t.info(), () -> {
-                long outlets = outletRepository.count();
-                long users = userRepository.count();
+                // Plain JDBC on purpose: this loops over several cafes inside ONE web request, and a JPA repository would reuse the
+                // request's open-in-view session, which stays on the first cafe it touched (every cafe then shows the first one's counts).
+                // JdbcTemplate takes a fresh, correctly routed connection for each call.
+                Long outlets = jdbcTemplate.queryForObject("SELECT count(*) FROM outlets", Long.class);
+                Long users = jdbcTemplate.queryForObject("SELECT count(*) FROM users", Long.class);
                 Long bills = jdbcTemplate.queryForObject(
                         "SELECT count(*) FROM bills WHERE status = 'PAID'", Long.class);
                 BigDecimal gmv = jdbcTemplate.queryForObject(
                         "SELECT COALESCE(SUM(net_amount), 0) FROM bills WHERE status = 'PAID'", BigDecimal.class);
-                return new Stats(outlets, users, bills == null ? 0 : bills, gmv == null ? BigDecimal.ZERO : gmv);
+                return new Stats(outlets == null ? 0 : outlets, users == null ? 0 : users, bills == null ? 0 : bills, gmv == null ? BigDecimal.ZERO : gmv);
             });
         } catch (Exception e) {
             log.warn("Could not fetch metrics for cafe '{}': {}", t.code(), e.getMessage());

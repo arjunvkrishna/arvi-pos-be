@@ -2,8 +2,6 @@ package com.neram.pos.service;
 
 import com.neram.pos.dto.CafeSummaryDto;
 import com.neram.pos.dto.CreateCafeRequest;
-import com.neram.pos.repository.OutletRepository;
-import com.neram.pos.repository.UserRepository;
 import com.neram.pos.tenancy.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -26,8 +24,6 @@ class SuperAdminServiceTest {
     private TenantCrypto crypto;
     private TenantDatabaseAdmin dbAdmin;
     private TenantRoutingDataSource routing;
-    private OutletRepository outletRepository;
-    private UserRepository userRepository;
     private JdbcTemplate jdbcTemplate;
     private SuperAdminService service;
 
@@ -41,11 +37,8 @@ class SuperAdminServiceTest {
         migrator = mock(TenantMigrator.class);
         dbAdmin = mock(TenantDatabaseAdmin.class);
         routing = mock(TenantRoutingDataSource.class);
-        outletRepository = mock(OutletRepository.class);
-        userRepository = mock(UserRepository.class);
         jdbcTemplate = mock(JdbcTemplate.class);
-        service = new SuperAdminService(registry, provisioner, migrator, crypto, dbAdmin, routing, outletRepository,
-                userRepository, jdbcTemplate);
+        service = new SuperAdminService(registry, provisioner, migrator, crypto, dbAdmin, routing, jdbcTemplate);
     }
 
     private TenantRecord cafe(long id, String code, String status) {
@@ -74,12 +67,12 @@ class SuperAdminServiceTest {
     @DisplayName("Cafe metrics come from the cafe's own database")
     void metricsAreReadInsideTheCafesContext() {
         when(registry.findAll()).thenReturn(List.of(cafe(5, "bluedoor", "ACTIVE")));
-        when(outletRepository.count()).thenAnswer(i -> {
+        when(jdbcTemplate.queryForObject(contains("FROM outlets"), eq(Long.class))).thenAnswer(i -> {
             assertEquals(5L, TenantContext.requireId());
             return 3L;
         });
-        when(userRepository.count()).thenReturn(8L);
-        when(jdbcTemplate.queryForObject(contains("count(*)"), eq(Long.class))).thenReturn(150L);
+        when(jdbcTemplate.queryForObject(contains("FROM users"), eq(Long.class))).thenReturn(8L);
+        when(jdbcTemplate.queryForObject(contains("FROM bills"), eq(Long.class))).thenReturn(150L);
         when(jdbcTemplate.queryForObject(contains("SUM(net_amount)"), eq(BigDecimal.class))).thenReturn(new BigDecimal("75420.50"));
 
         CafeSummaryDto s = service.getAllCafes().get(0);
@@ -92,10 +85,28 @@ class SuperAdminServiceTest {
     }
 
     @Test
+    @DisplayName("Every cafe gets its own counts: the cafe list loops over cafes inside one request, so each lookup must be routed afresh")
+    void eachCafeGetsItsOwnCounts() {
+        when(registry.findAll()).thenReturn(List.of(cafe(5, "bluedoor", "ACTIVE"), cafe(6, "greenleaf", "ACTIVE")));
+        when(jdbcTemplate.queryForObject(contains("FROM outlets"), eq(Long.class))).thenAnswer(i -> TenantContext.requireId() == 5L ? 2L : 1L);
+        when(jdbcTemplate.queryForObject(contains("FROM users"), eq(Long.class))).thenAnswer(i -> TenantContext.requireId() == 5L ? 5L : 1L);
+        when(jdbcTemplate.queryForObject(contains("FROM bills"), eq(Long.class))).thenReturn(0L);
+        when(jdbcTemplate.queryForObject(contains("SUM(net_amount)"), eq(BigDecimal.class))).thenReturn(BigDecimal.ZERO);
+
+        List<CafeSummaryDto> list = service.getAllCafes();
+
+        assertEquals(2L, list.get(0).getOutletsCount());
+        assertEquals(5L, list.get(0).getUsersCount());
+        assertEquals(1L, list.get(1).getOutletsCount(), "the second cafe must not show the first cafe's outlets");
+        assertEquals(1L, list.get(1).getUsersCount(), "the second cafe must not show the first cafe's users");
+        assertEquals(6L, ((Number) service.getPlatformAnalytics().get("totalUsers")).longValue());
+    }
+
+    @Test
     @DisplayName("One broken cafe database does not break the cafe list")
     void aBrokenCafeIsListedWithZeroMetrics() {
         when(registry.findAll()).thenReturn(List.of(cafe(5, "bluedoor", "ACTIVE"), cafe(6, "greenleaf", "ACTIVE")));
-        when(outletRepository.count()).thenThrow(new RuntimeException("db down")).thenReturn(2L);
+        when(jdbcTemplate.queryForObject(contains("FROM outlets"), eq(Long.class))).thenThrow(new RuntimeException("db down")).thenReturn(2L);
 
         List<CafeSummaryDto> list = service.getAllCafes();
 
