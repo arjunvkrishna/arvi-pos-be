@@ -29,6 +29,8 @@ public class BillLogRowDTO {
     private LocalDateTime createdAt;
     private int itemCount;
     private String paymentMode;
+    /** "CASH ₹100.00 + UPI ₹200.00" when the bill was paid in more than one way; null otherwise */
+    private String paymentSummary;
     private BigDecimal netAmount;
     private String status;
     private BigDecimal totalRefunded;

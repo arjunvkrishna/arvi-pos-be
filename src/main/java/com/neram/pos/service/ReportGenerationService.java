@@ -45,7 +45,6 @@ public class ReportGenerationService {
     private final CafeExpenseRepository cafeExpenseRepository;
     private final SupplierInvoiceRepository supplierInvoiceRepository;
     private final InventoryItemRepository inventoryItemRepository;
-    private final GiftCardRepository giftCardRepository;
     private final CustomerRepository customerRepository;
     private final LoyaltyLedgerRepository loyaltyLedgerRepository;
     private final CashierShiftRepository cashierShiftRepository;
@@ -106,8 +105,6 @@ public class ReportGenerationService {
                 return buildCustomerRetention(start, end);
             case "loyalty_ledger":
                 return buildLoyaltyLedgerReport(start, end);
-            case "gift_cards_summary":
-                return buildGiftCardsReport();
             case "discount_summary":
                 return buildDiscountReport(start, end);
             case "operating_expenses":
@@ -185,7 +182,6 @@ public class ReportGenerationService {
                     s.getCashierName() != null ? s.getCashierName() : "-",
                     s.getOpeningFloat() != null ? s.getOpeningFloat().toPlainString() : "0.00",
                     s.getCashSales() != null ? s.getCashSales().toPlainString() : "0.00",
-                    s.getGiftCardCashSales() != null ? s.getGiftCardCashSales().toPlainString() : "0.00",
                     s.getCashOutTotal() != null ? s.getCashOutTotal().toPlainString() : "0.00",
                     s.getCountedCash() != null ? s.getCountedCash().toPlainString() : "0.00",
                     diff.toPlainString(),
@@ -197,7 +193,7 @@ public class ReportGenerationService {
                 .reportId("daily_close")
                 .title("Daily Close & Cash Drawer Variance Report")
                 .periodDescription(start + " to " + end)
-                .headers(List.of("Shift #", "Date", "Cashier", "Float (₹)", "Cash Sales (₹)", "GC Cash (₹)", "Expenses (₹)", "Actual Cash (₹)", "Variance (₹)", "Status"))
+                .headers(List.of("Shift #", "Date", "Cashier", "Float (₹)", "Cash Sales (₹)", "Expenses (₹)", "Actual Cash (₹)", "Variance (₹)", "Status"))
                 .rows(rows)
                 .build();
     }
@@ -235,7 +231,6 @@ public class ReportGenerationService {
                 List.of("ASSETS", "Inventory Valuation (At Cost)", bs.getAssets().getInventoryValuationAtCost().toPlainString()),
                 List.of("TOTAL ASSETS", "-", bs.getAssets().getTotalAssets().toPlainString()),
                 List.of("LIABILITIES", "Unpaid Supplier Invoices", bs.getLiabilities().getUnpaidSupplierInvoices().toPlainString()),
-                List.of("LIABILITIES", "Active Gift Card Liability", bs.getLiabilities().getGiftCardLiability().toPlainString()),
                 List.of("LIABILITIES", "Unpaid Staff Tips", bs.getLiabilities().getUnpaidTips().toPlainString()),
                 List.of("TOTAL LIABILITIES", "-", bs.getLiabilities().getTotalLiabilities().toPlainString()),
                 List.of("EQUITY", "Net Worth / Owners Equity", bs.getNetWorthOrEquity().toPlainString())
@@ -450,29 +445,7 @@ public class ReportGenerationService {
                 .build();
     }
 
-    // ──────────────── 13 & 14. Gift Cards & Discounts ────────────────
-    private TabularReport buildGiftCardsReport() {
-        List<GiftCard> cards = giftCardRepository.findAll();
-        List<List<String>> rows = new ArrayList<>();
-        for (GiftCard g : cards) {
-            rows.add(List.of(
-                    g.getCode(),
-                    g.getInitialBalance() != null ? g.getInitialBalance().toPlainString() : "0.00",
-                    g.getCurrentBalance() != null ? g.getCurrentBalance().toPlainString() : "0.00",
-                    g.getStatus() != null ? g.getStatus().name() : "-",
-                    g.getCreatedAt() != null ? g.getCreatedAt().toString() : "-"
-            ));
-        }
-
-        return TabularReport.builder()
-                .reportId("gift_cards_summary")
-                .title("Gift Cards Portfolio & Liability Report")
-                .periodDescription("All Active and Historical Cards")
-                .headers(List.of("Card Code", "Initial Value (₹)", "Current Balance (₹)", "Status", "Issued Date"))
-                .rows(rows)
-                .build();
-    }
-
+    // ──────────────── 14. Discounts ────────────────
     private TabularReport buildDiscountReport(LocalDate start, LocalDate end) {
         List<Bill> bills = billRepository.findPaidBillsBetweenBusinessDates(start, end);
         BigDecimal manualDiscounts = bills.stream()
@@ -481,20 +454,16 @@ public class ReportGenerationService {
         BigDecimal promoDiscounts = bills.stream()
                 .map(b -> b.getPromotionDiscountAmount() != null ? b.getPromotionDiscountAmount() : BigDecimal.ZERO)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal couponDiscounts = bills.stream()
-                .map(b -> b.getCouponDiscount() != null ? b.getCouponDiscount() : BigDecimal.ZERO)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         List<List<String>> rows = List.of(
                 List.of("Manual Item/Bill Discounts", manualDiscounts.toPlainString()),
                 List.of("Automatic Promotions", promoDiscounts.toPlainString()),
-                List.of("Marketing Coupon Discounts", couponDiscounts.toPlainString()),
-                List.of("TOTAL DISCOUNTS CONCEDED", manualDiscounts.add(promoDiscounts).add(couponDiscounts).toPlainString())
+                List.of("TOTAL DISCOUNTS CONCEDED", manualDiscounts.add(promoDiscounts).toPlainString())
         );
 
         return TabularReport.builder()
                 .reportId("discount_summary")
-                .title("Discounts, Promotions & Coupons Concession Report")
+                .title("Discounts & Promotions Concession Report")
                 .periodDescription(start + " to " + end)
                 .headers(List.of("Discount Channel", "Total Conceded Amount (₹)"))
                 .rows(rows)

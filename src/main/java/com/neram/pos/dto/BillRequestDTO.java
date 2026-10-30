@@ -12,9 +12,6 @@ public class BillRequestDTO {
     private String customerName;
     private Long customerId;
     private String customerPhone;
-    private String giftCardCode;
-    private String couponCode;
-    private Long couponId;
     private Integer redeemLoyaltyPoints;
     private String orderType;
     private String outdoorToken;

@@ -126,6 +126,10 @@ public class Bill implements com.neram.pos.tenancy.TenantScoped , com.neram.pos.
     @Column(name = "printed_at")
     private LocalDateTime printedAt;
 
+    /** When the payment was confirmed. From kotPrintedAt to this is how long the guests stayed (null while unpaid). */
+    @Column(name = "paid_at")
+    private LocalDateTime paidAt;
+
     @Column(name = "printed_by")
     private Long printedBy;
 
@@ -203,7 +207,7 @@ public class Bill implements com.neram.pos.tenancy.TenantScoped , com.neram.pos.
         }
     }
 
-    public enum PaymentMode { CASH, UPI, CARD, GIFT_CARD, LOYALTY_POINTS }
+    public enum PaymentMode { CASH, UPI, CARD, LOYALTY_POINTS }
     public enum Status { DRAFT, ACTIVE, KOT_REQUESTED, KOT_PRINTED, BILL_REQUESTED, BILL_PRINTED, PAID, CANCELLED, REFUNDED, PARTIALLY_REFUNDED, VOIDED }
     public enum OrderType { TABLE, OUTDOOR, TAKEAWAY }
 }

@@ -3,8 +3,10 @@ package com.neram.pos.service;
 import com.neram.pos.dto.OwnerDashboardDTO;
 import com.neram.pos.entity.Bill;
 import com.neram.pos.entity.BillItem;
+import com.neram.pos.entity.BillPayment;
 import com.neram.pos.entity.DiningTable;
 import com.neram.pos.entity.InventoryItem;
+import com.neram.pos.repository.BillPaymentRepository;
 import com.neram.pos.repository.BillRepository;
 import com.neram.pos.repository.DiningTableRepository;
 import com.neram.pos.repository.InventoryItemRepository;
@@ -27,8 +29,16 @@ import java.util.stream.Collectors;
 public class OwnerDashboardService {
 
     private final BillRepository billRepository;
+    private final BillPaymentRepository billPaymentRepository;
     private final DiningTableRepository diningTableRepository;
     private final InventoryItemRepository inventoryItemRepository;
+
+    /** The parts of the bills that were paid in more than one way (cash + UPI...), by bill id. */
+    private Map<Long, List<BillPayment>> partsOf(List<Bill> bills) {
+        List<Long> ids = bills.stream().filter(b -> b.getPaymentSummary() != null).map(Bill::getId).collect(Collectors.toList());
+        if (ids.isEmpty()) return Map.of();
+        return billPaymentRepository.findByBillIdIn(ids).stream().collect(Collectors.groupingBy(BillPayment::getBillId));
+    }
 
     public static LocalDate currentBusinessDate() {
         return com.neram.pos.util.BusinessDate.now();
@@ -55,6 +65,7 @@ public class OwnerDashboardService {
         BigDecimal taxToday = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
         Map<String, BigDecimal> tenderBreakdown = new LinkedHashMap<>();
         Map<String, TopDishAccumulator> dishSalesMap = new HashMap<>();
+        Map<Long, List<BillPayment>> paidInParts = partsOf(todayBills);
 
         for (Bill b : todayBills) {
             BigDecimal net = b.getNetAmount() != null ? b.getNetAmount() : BigDecimal.ZERO;
@@ -67,8 +78,13 @@ public class OwnerDashboardService {
             discountsToday = discountsToday.add(disc);
             taxToday = taxToday.add(tax);
 
-            String mode = b.getPaymentMode() != null ? b.getPaymentMode().name() : "CASH";
-            tenderBreakdown.merge(mode, net, BigDecimal::add);
+            List<BillPayment> parts = paidInParts.get(b.getId());
+            if (parts != null && !parts.isEmpty()) {
+                for (BillPayment p : parts) tenderBreakdown.merge(p.getMode(), p.getAmount(), BigDecimal::add);   // cash + UPI: each part under its own mode
+            } else {
+                String mode = b.getPaymentMode() != null ? b.getPaymentMode().name() : "CASH";
+                tenderBreakdown.merge(mode, net, BigDecimal::add);
+            }
 
             if (b.getItems() != null) {
                 for (BillItem item : b.getItems()) {

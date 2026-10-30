@@ -37,6 +37,12 @@ public class CustomerService {
         return digits;
     }
 
+    /** The points a member can use today: nothing once the validity period has passed. */
+    public static int spendablePoints(Customer c, LocalDate today) {
+        int balance = c.getPointsBalance() != null ? c.getPointsBalance() : 0;
+        return c.getPointsExpireAt() != null && c.getPointsExpireAt().isBefore(today) ? 0 : balance;
+    }
+
     public Optional<CustomerDTO> findByPhone(String phone) {
         String norm = normalizePhone(phone);
         return customerRepository.findByPhone(norm).map(this::toDTO);

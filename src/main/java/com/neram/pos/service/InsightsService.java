@@ -117,7 +117,7 @@ public class InsightsService {
         return InsightsDTO.builder().start(p.start()).end(p.end()).prevStart(p.prevStart()).prevEnd(p.prevEnd()).compare(compare)
                 .byHour(InsightsMath.byHour(bills)).byWeekday(InsightsMath.byWeekday(bills, p.start(), p.end())).heatmap(InsightsMath.heatmap(bills))
                 .byOrderType(InsightsMath.byOrderType(bills)).byPaymentMode(InsightsMath.byPaymentMode(bills, splitPartsOf(bills))).byCategory(InsightsMath.byCategory(bills, categoryOfDish))
-                .byStaff(InsightsMath.byStaff(bills, names)).byTable(InsightsMath.byTable(bills, 8)).discounts(InsightsMath.discounts(bills)).losses(losses).tax(InsightsMath.tax(bills))
+                .byStaff(InsightsMath.byStaff(bills, names)).byTable(InsightsMath.byTable(bills, 8)).dineIn(InsightsMath.dineIn(bills)).discounts(InsightsMath.discounts(bills)).losses(losses).tax(InsightsMath.tax(bills))
                 .dishes(dishes).neverSold(never.size() > 40 ? new ArrayList<>(never.subList(0, 40)) : never).neverSoldCount(never.size()).stock(stock).build();
     }
 

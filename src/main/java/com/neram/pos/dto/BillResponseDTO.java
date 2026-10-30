@@ -20,6 +20,10 @@ public class BillResponseDTO {
     private String customerName;
     private Long customerId;
     private String customerPhone;
+    /** The loyalty member's points the customer can use right now (0 once they lapsed); null when the bill has no member. */
+    private Integer customerPoints;
+    /** Last day those points are valid. */
+    private java.time.LocalDate customerPointsExpireAt;
     private java.time.LocalDate businessDate;
     private String outdoorToken;
     private String takeawayToken;

@@ -167,6 +167,10 @@ public class PrintBridgeService {
                     job.getJobType(),
                     List.of(PrintJobStatus.PENDING, PrintJobStatus.CLAIMED, PrintJobStatus.RETRY_PENDING)
             );
+            // A customer bill can differ from the one already waiting (points used, one of the split bills): only an identical one is a repeat tap.
+            if ("BILL".equals(job.getJobType())) {
+                activeJobs = activeJobs.stream().filter(j -> java.util.Arrays.equals(j.getPayload(), job.getPayload())).toList();
+            }
             if (!activeJobs.isEmpty()) {
                 PrintJob active = activeJobs.get(0);
                 log.info("Existing active print job {} found for bill {} ({}). Returning active job.",

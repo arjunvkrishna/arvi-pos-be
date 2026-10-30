@@ -31,9 +31,7 @@ public class BillRefundService {
     private final UserRepository userRepository;
     private final CashierShiftService cashierShiftService;
     private final AuditLogService auditLogService;
-    private final GiftCardService giftCardService;
     private final CustomerService customerService;
-    private final CouponService couponService;
 
     @Transactional
     public BillRefundDTO.RefundResponse processRefund(Long billId, BillRefundDTO.RefundRequest req) {
@@ -116,9 +114,7 @@ public class BillRefundService {
         BigDecimal newRemaining = remainingRefundable.subtract(refundAmt).setScale(2, RoundingMode.HALF_UP);
         if (newRemaining.compareTo(BigDecimal.ZERO) == 0) {
             bill.setStatus(Bill.Status.REFUNDED);
-            giftCardService.refundForBill(bill.getId());
             customerService.reversePointsForBill(bill.getId());
-            couponService.revertCouponForBill(bill.getId());
         } else {
             bill.setStatus(Bill.Status.PARTIALLY_REFUNDED);
         }

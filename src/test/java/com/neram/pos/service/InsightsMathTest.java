@@ -142,4 +142,74 @@ class InsightsMathTest {
         assertEquals("THIS_MONTH", def.name()); assertEquals(LocalDate.parse("2026-10-01"), def.start());
         assertEquals("THIS_MONTH", AnalyticsPeriod.resolve("nonsense", null, null, today).name());
     }
+
+    private static Bill visit(String table, Bill.OrderType type, String kotAt, String paidAt) {
+        Bill b = bill("2026-10-20T12:00:00", "100", type, Bill.PaymentMode.CASH, 1L, table);
+        if (kotAt != null) b.setKotPrintedAt(LocalDateTime.parse(kotAt));
+        if (paidAt != null) b.setPaidAt(LocalDateTime.parse(paidAt));
+        return b;
+    }
+
+    @Test
+    @DisplayName("dine-in time: from the kitchen ticket to payment, for the cafe and per table")
+    void dineInTime() {
+        DineIn d = InsightsMath.dineIn(List.of(
+                visit("T-01", T, "2026-10-20T12:00:00", "2026-10-20T12:30:00"),     // 30 min
+                visit("T-01", T, "2026-10-20T13:00:00", "2026-10-20T14:00:00"),     // 60 min
+                visit("T-02", T, "2026-10-20T13:00:00", "2026-10-20T14:30:00")));   // 90 min
+        assertEquals(3, d.getVisits());
+        assertEquals(60.0, d.getAvgMinutes());
+        assertEquals(60.0, d.getMedianMinutes());
+        assertEquals(30.0, d.getShortestMinutes());
+        assertEquals(90.0, d.getLongestMinutes());
+        assertEquals(2, d.getByTable().size());
+        assertEquals("T-02", d.getByTable().get(0).getTable(), "the table that kept guests longest comes first");
+        assertEquals(90.0, d.getByTable().get(0).getAvgMinutes());
+        DineInTable t1 = d.getByTable().get(1);
+        assertEquals("T-01", t1.getTable());
+        assertEquals(2, t1.getVisits());
+        assertEquals(45.0, t1.getAvgMinutes());
+        assertEquals(60.0, t1.getLongestMinutes());
+    }
+
+    @Test
+    @DisplayName("dine-in time: the median of an even number of visits is the middle pair's average")
+    void dineInMedian() {
+        DineIn d = InsightsMath.dineIn(List.of(
+                visit("T-01", T, "2026-10-20T12:00:00", "2026-10-20T12:10:00"),
+                visit("T-01", T, "2026-10-20T12:00:00", "2026-10-20T12:20:00"),
+                visit("T-01", T, "2026-10-20T12:00:00", "2026-10-20T12:40:00"),
+                visit("T-01", T, "2026-10-20T12:00:00", "2026-10-20T13:20:00")));
+        assertEquals(30.0, d.getMedianMinutes());
+        assertEquals(37.5, d.getAvgMinutes());
+    }
+
+    @Test
+    @DisplayName("dine-in time: takeaway and outdoor orders, untimed bills and visits over six hours are not averaged")
+    void dineInLeavesOutWhatIsNotAVisit() {
+        DineIn d = InsightsMath.dineIn(List.of(
+                visit("T-01", T, "2026-10-20T12:00:00", "2026-10-20T12:40:00"),
+                visit(null, Bill.OrderType.TAKEAWAY, "2026-10-20T12:00:00", "2026-10-20T12:05:00"),
+                visit("O-1", Bill.OrderType.OUTDOOR, "2026-10-20T12:00:00", "2026-10-20T12:50:00"),
+                visit("T-02", T, null, "2026-10-20T12:40:00"),                          // no kitchen ticket was printed
+                visit("T-03", T, "2026-10-20T12:00:00", null),                          // payment time not recorded
+                visit("T-04", T, "2026-10-20T12:00:00", "2026-10-20T11:00:00"),         // paid before the ticket: a bad record
+                visit("T-05", T, "2026-10-20T09:00:00", "2026-10-20T16:00:01")));       // seven hours: a bill left open
+        assertEquals(1, d.getVisits());
+        assertEquals(40.0, d.getAvgMinutes());
+        assertEquals(3, d.getUnmeasured());
+        assertEquals(1, d.getTooLong());
+        assertEquals(360, d.getMaxVisitMinutes());
+        assertEquals(1, d.getByTable().size());
+    }
+
+    @Test
+    @DisplayName("dine-in time: no visits gives zeros, not an error")
+    void dineInEmpty() {
+        DineIn d = InsightsMath.dineIn(List.of());
+        assertEquals(0, d.getVisits());
+        assertEquals(0.0, d.getAvgMinutes());
+        assertEquals(0.0, d.getShortestMinutes());
+        assertTrue(d.getByTable().isEmpty());
+    }
 }

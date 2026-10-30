@@ -28,6 +28,7 @@ public class InsightsDTO {
     private List<Slice> byCategory;
     private List<StaffRow> byStaff;
     private List<TableRow> byTable;
+    private DineIn dineIn;
     private Discounts discounts;
     private Losses losses;
     private Tax tax;
@@ -56,6 +57,20 @@ public class InsightsDTO {
 
     @Data @Builder @NoArgsConstructor @AllArgsConstructor
     public static class TableRow { private String table; private int orders; private double sales; }
+
+    /** How long guests stayed (kitchen ticket printed to payment confirmed), dine-in bills only: minutes, for the cafe and for each table. */
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
+    public static class DineIn {
+        private int visits; private double avgMinutes; private double medianMinutes; private double shortestMinutes; private double longestMinutes;
+        /** table bills that could not be timed (no kitchen ticket or no payment time) */
+        private int unmeasured;
+        /** visits left out of the numbers because they ran past maxVisitMinutes (a bill left open after the guests left) */
+        private int tooLong; private int maxVisitMinutes;
+        private List<DineInTable> byTable;
+    }
+
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
+    public static class DineInTable { private String table; private int visits; private double avgMinutes; private double longestMinutes; }
 
     @Data @Builder @NoArgsConstructor @AllArgsConstructor
     public static class Discounts { private double discountAmount; private double promotionAmount; private double total; private int billsWithDiscount; private double percentOfGross; }

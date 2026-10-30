@@ -7,9 +7,11 @@ import com.neram.pos.entity.MenuItem;
 
 import java.math.BigDecimal;
 import java.time.DayOfWeek;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.format.TextStyle;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -141,6 +143,38 @@ public final class InsightsMath {
         for (Bill b : bills) { if (!"Dine-in".equals(orderTypeLabel(b)) || b.getTableNumber() == null || b.getTableNumber().isBlank()) continue; double[] v = m.computeIfAbsent(b.getTableNumber().trim(), k -> new double[2]); v[0]++; v[1] += d(b.getNetAmount()); }
         return m.entrySet().stream().map(e -> TableRow.builder().table(e.getKey()).orders((int) e.getValue()[0]).sales(r2(e.getValue()[1])).build())
                 .sorted(Comparator.comparingDouble(TableRow::getSales).reversed()).limit(limit).collect(Collectors.toList());
+    }
+
+    /** A visit longer than this is left out of the averages: it is nearly always a bill that stayed open after the guests left. */
+    public static final int MAX_VISIT_MINUTES = 6 * 60;
+
+    /** How long guests stayed, from the kitchen ticket being printed to the payment being confirmed (dine-in bills), for the cafe and per table. */
+    public static DineIn dineIn(List<Bill> bills) {
+        List<Double> all = new ArrayList<>();
+        Map<String, List<Double>> perTable = new LinkedHashMap<>();
+        int unmeasured = 0, tooLong = 0;
+        for (Bill b : bills) {
+            if (!"Dine-in".equals(orderTypeLabel(b)) || b.getTableNumber() == null || b.getTableNumber().isBlank()) continue;
+            if (b.getKotPrintedAt() == null || b.getPaidAt() == null || b.getPaidAt().isBefore(b.getKotPrintedAt())) { unmeasured++; continue; }
+            double minutes = Duration.between(b.getKotPrintedAt(), b.getPaidAt()).toMillis() / 60000.0;
+            if (minutes > MAX_VISIT_MINUTES) { tooLong++; continue; }
+            all.add(minutes);
+            perTable.computeIfAbsent(b.getTableNumber().trim(), k -> new ArrayList<>()).add(minutes);
+        }
+        List<DineInTable> tables = perTable.entrySet().stream()
+                .map(e -> DineInTable.builder().table(e.getKey()).visits(e.getValue().size()).avgMinutes(r1(average(e.getValue()))).longestMinutes(r1(Collections.max(e.getValue()))).build())
+                .sorted(Comparator.comparingDouble(DineInTable::getAvgMinutes).reversed().thenComparing(DineInTable::getTable)).collect(Collectors.toList());
+        List<Double> sorted = all.stream().sorted().collect(Collectors.toList());
+        return DineIn.builder().visits(all.size()).avgMinutes(r1(average(all))).medianMinutes(r1(median(sorted)))
+                .shortestMinutes(sorted.isEmpty() ? 0 : r1(sorted.get(0))).longestMinutes(sorted.isEmpty() ? 0 : r1(sorted.get(sorted.size() - 1)))
+                .unmeasured(unmeasured).tooLong(tooLong).maxVisitMinutes(MAX_VISIT_MINUTES).byTable(tables).build();
+    }
+
+    private static double average(List<Double> v) { return v.isEmpty() ? 0 : v.stream().mapToDouble(Double::doubleValue).sum() / v.size(); }
+    private static double median(List<Double> sorted) {
+        if (sorted.isEmpty()) return 0;
+        int n = sorted.size();
+        return n % 2 == 1 ? sorted.get(n / 2) : (sorted.get(n / 2 - 1) + sorted.get(n / 2)) / 2.0;
     }
 
     public static Discounts discounts(List<Bill> bills) {

@@ -3,6 +3,8 @@ package com.neram.pos.service;
 import com.neram.pos.dto.BillItemResponseDTO;
 import com.neram.pos.dto.BillRequestDTO;
 import com.neram.pos.dto.BillResponseDTO;
+import com.neram.pos.dto.CustomerDTO;
+import com.neram.pos.util.BusinessDate;
 import com.neram.pos.entity.Bill;
 import com.neram.pos.entity.BillItem;
 import com.neram.pos.entity.BillRefund;
@@ -60,8 +62,6 @@ public class BillService {
     private final NotificationStreamService notificationStream;
     private final com.neram.pos.repository.CustomerRepository customerRepository;
     private final CustomerService customerService;
-    private final GiftCardService giftCardService;
-    private final CouponService couponService;
     private final com.neram.pos.repository.ModifierRepository modifierRepository;
     private final com.neram.pos.repository.ComboGroupItemRepository comboGroupItemRepository;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
@@ -265,16 +265,12 @@ public class BillService {
             customerService.findByPhone(dto.getCustomerPhone()).ifPresent(c -> bill.setCustomerId(c.getId()));
         }
 
-        Bill.PaymentMode mode = Bill.PaymentMode.CASH;
-        if (dto.getPaymentMode() != null) {
-            try {
-                mode = Bill.PaymentMode.valueOf(dto.getPaymentMode().toUpperCase());
-            } catch (Exception ignored) {}
-        }
+        Bill.PaymentMode mode = dto.getPaymentMode() != null ? acceptedPaymentMode(dto.getPaymentMode()) : Bill.PaymentMode.CASH;
         bill.setPaymentMode(mode);
         bill.setStatus(Bill.Status.PAID);
         bill.setNotes(dto.getNotes());
         bill.setCreatedAt(LocalDateTime.now());
+        bill.setPaidAt(bill.getCreatedAt());
 
         // Get current user id
         try {
@@ -400,7 +396,7 @@ public class BillService {
         }
         if (dto.getPaymentMode() != null) {
             try {
-                bill.setPaymentMode(Bill.PaymentMode.valueOf(dto.getPaymentMode().toUpperCase()));
+                bill.setPaymentMode(acceptedPaymentMode(dto.getPaymentMode()));
                 bill.setPaymentSummary(null);   // choosing one mode again turns a split bill back into a single-mode bill
             } catch (Exception ignored) {}
         }
@@ -811,9 +807,7 @@ public class BillService {
             }
         } catch (Exception ignored) {}
 
-        if (dto.getCustomerId() != null) {
-            bill.setCustomerId(dto.getCustomerId());
-        }
+        attachMember(bill, dto.getCustomerId(), dto.getCustomerPhone(), dto.getCustomerName());
 
         // If bill was already printed, it is awaiting payment confirmation - prevent modifying items
         if (bill.getStatus() == Bill.Status.BILL_PRINTED) {
@@ -1626,9 +1620,7 @@ public class BillService {
                 customerService.findByPhone(dto.getCustomerPhone()).ifPresent(c -> bill.setCustomerId(c.getId()));
             }
             if (dto.getPaymentMode() != null) {
-                try {
-                    bill.setPaymentMode(Bill.PaymentMode.valueOf(dto.getPaymentMode().toUpperCase()));
-                } catch (Exception ignored) {}
+                bill.setPaymentMode(acceptedPaymentMode(dto.getPaymentMode()));
             }
             Double discPct = dto.getDiscountPercent();
             Double taxPct = dto.getTaxPercent();
@@ -1642,6 +1634,7 @@ public class BillService {
 
         bill.setStatus(Bill.Status.PAID);
         bill.setPrintedAt(LocalDateTime.now());
+        bill.setPaidAt(bill.getPrintedAt());
         try {
             Authentication auth = SecurityContextHolder.getContext().getAuthentication();
             if (auth != null && auth.isAuthenticated() && !auth.getPrincipal().equals("anonymousUser")) {
@@ -1680,9 +1673,7 @@ public class BillService {
         // An employee who was given the print-bill access may set the discount; tax, payment mode and parcel charge stay as the order holds them
         if (dto != null && isManagerOrAdmin()) {
             if (dto.getPaymentMode() != null) {
-                try {
-                    bill.setPaymentMode(Bill.PaymentMode.valueOf(dto.getPaymentMode().toUpperCase()));
-                } catch (Exception ignored) {}
+                bill.setPaymentMode(acceptedPaymentMode(dto.getPaymentMode()));
             }
             Double discPct = dto.getDiscountPercent();
             Double taxPct = dto.getTaxPercent();
@@ -1737,18 +1728,10 @@ public class BillService {
                 customerService.findByPhone(dto.getCustomerPhone()).ifPresent(c -> bill.setCustomerId(c.getId()));
             }
             if (dto.getPaymentMode() != null) {
-                try {
-                    bill.setPaymentMode(Bill.PaymentMode.valueOf(dto.getPaymentMode().toUpperCase()));
-                } catch (Exception ignored) {}
+                bill.setPaymentMode(acceptedPaymentMode(dto.getPaymentMode()));
             }
         } else if (bill.getPaymentMode() == null) {
             bill.setPaymentMode(Bill.PaymentMode.CASH);
-        }
-
-        if (dto != null && dto.getCouponCode() != null && !dto.getCouponCode().isBlank()) {
-            planService.require(com.neram.pos.plan.Feature.CRM);
-            BigDecimal couponDisc = couponService.applyCouponSafely(dto.getCouponCode(), bill.getCustomerId(), bill.getId(), bill.getSubtotal());
-            bill.setCouponDiscount(couponDisc);
         }
 
         if (dto != null && (dto.getDiscountPercent() != null || dto.getTaxPercent() != null || dto.getParcelCharge() != null)) {
@@ -1770,6 +1753,7 @@ public class BillService {
         bill.setPaymentSummary(split.size() > 1 ? SplitPayments.summary(split) : null);
 
         bill.setStatus(Bill.Status.PAID);
+        bill.setPaidAt(LocalDateTime.now());
         if (bill.getPrintedAt() == null) {
             bill.setPrintedAt(LocalDateTime.now());
         }
@@ -1788,32 +1772,63 @@ public class BillService {
         return res;
     }
 
+    /** The ways a bill can be paid: cash, UPI, card and loyalty points. Anything else is refused. */
+    static Bill.PaymentMode acceptedPaymentMode(String text) {
+        Bill.PaymentMode mode;
+        try {
+            mode = Bill.PaymentMode.valueOf(text.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Unknown payment mode '" + text + "'. Use CASH, UPI, CARD or LOYALTY_POINTS.");
+        }
+        return mode;
+    }
+
+    /** The bills a split would print (nothing is saved or printed): used by the screen to show each bill before the cashier prints. */
+    @Transactional(readOnly = true)
+    public com.neram.pos.dto.SplitBillPreviewDTO previewSplit(Long billId, com.neram.pos.dto.SplitBillRequestDTO request) {
+        Bill bill = billRepository.findById(billId).orElseThrow(() -> new IllegalArgumentException("Bill not found with id: " + billId));
+        List<BillSplit.Portion> portions = BillSplit.divide(bill, request != null ? request.shares() : null);
+        return com.neram.pos.dto.SplitBillPreviewDTO.builder().billId(bill.getId()).billNumber(bill.getBillNumber()).status(bill.getStatus().name())
+                .netAmount(bill.getNetAmount()).portions(portions).build();
+    }
+
+    /**
+     * Links the loyalty member to an order being saved: by id, or by the phone number the customer gave when ordering (a new
+     * number joins the program, as it would at the payment screen). A blank phone sent with the order removes the link.
+     * Nothing sent leaves the order as it was.
+     */
+    private void attachMember(Bill bill, Long customerId, String phone, String customerName) {
+        if (customerId != null) {
+            bill.setCustomerId(customerId);
+            return;
+        }
+        if (phone == null) return;
+        if (phone.isBlank()) {
+            bill.setCustomerId(null);
+            return;
+        }
+        // loyalty members are part of the customers module: a plan without it must not create them through the order
+        planService.require(com.neram.pos.plan.Feature.CRM);
+        String normalized = CustomerService.normalizePhone(phone);
+        if (normalized == null || !normalized.matches("\\+?\\d{10,15}")) {
+            throw new IllegalArgumentException("Enter the customer's 10-digit phone number, or leave it empty.");
+        }
+        Long memberId = customerService.findByPhone(normalized).map(CustomerDTO::getId).orElseGet(() -> {
+            String name = customerName != null && !customerName.isBlank() ? customerName.trim() : "Guest";
+            CustomerDTO created = new CustomerDTO();
+            created.setName(name);
+            created.setPhone(normalized);
+            created.setMarketingConsent(false);
+            return customerService.createCustomer(created).getId();
+        });
+        bill.setCustomerId(memberId);
+    }
+
     private void handlePaymentTendersAndLoyalty(Bill bill, BillRequestDTO dto) {
         if (bill == null || bill.getId() == null) return;
         List<BillRequestDTO.PaymentPart> parts = dto != null ? dto.getPayments() : null;
 
-        // 1. Gift card redemption
-        if (bill.getPaymentMode() == Bill.PaymentMode.GIFT_CARD) {
-            planService.require(com.neram.pos.plan.Feature.CRM);
-            String gcCode = dto != null && dto.getGiftCardCode() != null ? dto.getGiftCardCode().trim() : null;
-            if (gcCode == null || gcCode.isBlank()) {
-                throw new IllegalArgumentException("Gift card code is required for GIFT_CARD payment.");
-            }
-            giftCardService.redeem(gcCode, bill.getNetAmount(), bill.getId());
-        } else if (parts != null) {
-            for (BillRequestDTO.PaymentPart p : parts) {
-                if ("GIFT_CARD".equalsIgnoreCase(p.getMode()) && p.getAmount() != null && p.getAmount().signum() > 0) {
-                    planService.require(com.neram.pos.plan.Feature.CRM);
-                    String code = p.getReference() != null && !p.getReference().isBlank() ? p.getReference().trim() : (dto != null && dto.getGiftCardCode() != null ? dto.getGiftCardCode().trim() : null);
-                    if (code == null || code.isBlank()) {
-                        throw new IllegalArgumentException("Gift card code is required for GIFT_CARD payment.");
-                    }
-                    giftCardService.redeem(code, p.getAmount(), bill.getId());
-                }
-            }
-        }
-
-        // 2. Loyalty points redemption
+        // 1. Loyalty points redemption
         if (bill.getPaymentMode() == Bill.PaymentMode.LOYALTY_POINTS) {
             planService.require(com.neram.pos.plan.Feature.CRM);
             if (bill.getCustomerId() == null) {
@@ -1839,7 +1854,7 @@ public class BillService {
             customerService.redeemPoints(bill.getCustomerId(), bill.getId(), dto.getRedeemLoyaltyPoints());
         }
 
-        // 3. Loyalty points earning strictly on net taxable merchandise paid via monetary tenders
+        // 2. Loyalty points earning strictly on net taxable merchandise paid via monetary tenders
         if (bill.getCustomerId() != null) {
             BigDecimal subtotal = bill.getSubtotal() != null ? bill.getSubtotal() : BigDecimal.ZERO;
             BigDecimal discAmt = bill.getDiscountAmount() != null ? bill.getDiscountAmount() : BigDecimal.ZERO;
@@ -1863,13 +1878,6 @@ public class BillService {
             BigDecimal eligibleMerchandiseSpend = taxableMerchandise.min(monetarySpend);
             // Also called when nothing was paid in money (a bill paid with points): it is still a purchase, so the validity period restarts.
             customerService.earnPoints(bill.getCustomerId(), bill.getId(), eligibleMerchandiseSpend);
-        }
-
-        // 4. Coupon redemption
-        if (dto != null && dto.getCouponCode() != null && !dto.getCouponCode().isBlank() && (bill.getCouponDiscount() == null || bill.getCouponDiscount().compareTo(BigDecimal.ZERO) == 0)) {
-            BigDecimal couponDisc = couponService.applyCouponSafely(dto.getCouponCode(), bill.getCustomerId(), bill.getId(), bill.getSubtotal());
-            bill.setCouponDiscount(couponDisc);
-            computeBillAmounts(bill, dto.getDiscountPercent(), dto.getTaxPercent(), dto.getGstEnabled(), dto.getCgstPercent(), dto.getSgstPercent(), dto.getParcelCharge());
         }
     }
 
@@ -1937,6 +1945,7 @@ public class BillService {
                 .createdAt(b.getCreatedAt())
                 .itemCount(b.getItems() != null ? b.getItems().size() : 0)
                 .paymentMode(b.getPaymentMode().name())
+                .paymentSummary(b.getPaymentSummary())
                 .netAmount(b.getNetAmount())
                 .status(b.getStatus().name())
                 .totalRefunded(refunded != null ? refunded : BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP))
@@ -2009,6 +2018,7 @@ public class BillService {
         boolean hasParcel = hasParcelItemsOrTakeaway(b);
         BigDecimal parcelCharge = b.getParcelCharge() != null ? b.getParcelCharge().setScale(2, RoundingMode.HALF_UP) : BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
 
+        Customer member = b.getCustomerId() != null ? customerRepository.findById(b.getCustomerId()).orElse(null) : null;
         return BillResponseDTO.builder()
                 .id(b.getId())
                 .billNumber(b.getBillNumber())
@@ -2017,7 +2027,9 @@ public class BillService {
                 .tableNumber(b.getTableNumber())
                 .customerName(b.getCustomerName())
                 .customerId(b.getCustomerId())
-                .customerPhone(b.getCustomerId() != null ? customerRepository.findById(b.getCustomerId()).map(Customer::getPhone).orElse(null) : null)
+                .customerPhone(member != null ? member.getPhone() : null)
+                .customerPoints(member != null ? CustomerService.spendablePoints(member, BusinessDate.now()) : null)
+                .customerPointsExpireAt(member != null && CustomerService.spendablePoints(member, BusinessDate.now()) > 0 ? member.getPointsExpireAt() : null)
                 .businessDate(b.getBusinessDate())
                 .outdoorToken(b.getOutdoorToken())
                 .takeawayToken(b.getTakeawayToken())

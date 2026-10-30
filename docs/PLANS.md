@@ -10,7 +10,7 @@ combos, basic stock, the analytics dashboard, owner dashboard, "What sold", user
 | Staff logins (active, owner included) | 5 | 25 | unlimited |
 | Stock counts, expiry and reorder lists (`STOCK_CONTROL`) | - | yes | yes |
 | Suppliers, expenses and budgets (`SUPPLIERS_EXPENSES`) | - | yes | yes |
-| Customers, loyalty, gift cards, coupons (`CRM`) | - | yes | yes |
+| Customers and loyalty points (`CRM`) | - | yes | yes |
 | Staff records, attendance, leave, payroll, tip payouts (`STAFF_PAYROLL`) | - | yes | yes |
 | Telegram alerts and daily reports (`TELEGRAM`) | - | yes | yes |
 | Report exports, PDF and Excel analytics (`EXPORTS`) | - | yes | yes |
@@ -29,7 +29,7 @@ combos, basic stock, the analytics dashboard, owner dashboard, "What sold", user
   `@OpenInEveryPlan` exempts one endpoint inside a gated controller (a customer's unsubscribe link must always work).
 * `PlanCoverageTest` fails the build when a controller is neither marked nor listed as open on every plan, so a new module cannot
   be added without deciding which plans get it.
-* Billing refuses a coupon, gift card or loyalty-points payment on a plan without `CRM`, so those cannot be slipped in through the
+* Billing refuses a loyalty-points payment on a plan without `CRM`, so it cannot be slipped in through the
   till's API. The Telegram report and the daily close are only booked for cafes whose plan has `TELEGRAM`.
 * **Staff logins**: creating a login, or switching an old one back on, is refused when the cafe's active logins reach the plan's
   number. Existing logins are never removed. **Branches**: the cafe's own `max_outlets` (set from the plan; the platform owner may

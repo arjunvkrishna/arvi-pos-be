@@ -83,7 +83,6 @@ class PlanCoverageTest {
     @Test
     void theTilledPlanSplitMatchesWhatWasPromised() throws Exception {
         assertEquals(Feature.CRM, feature("CustomerController"));
-        assertEquals(Feature.CRM, feature("CouponController"));
         assertEquals(Feature.STAFF_PAYROLL, feature("SalaryController"));
         assertEquals(Feature.SUPPLIERS_EXPENSES, feature("ExpenseController"));
         assertEquals(Feature.CAMPAIGNS, feature("CampaignController"));

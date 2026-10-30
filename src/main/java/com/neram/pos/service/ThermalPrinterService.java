@@ -83,6 +83,12 @@ public class ThermalPrinterService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private AuditLogService auditLogService;
 
+    /** Optional: the loyalty block on the bill needs them. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.neram.pos.repository.CustomerRepository customerRepository;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private LoyaltySettingsService loyaltySettings;
+
     private final PrinterSettingRepository printerSettingRepository;
     private final BillRepository billRepository;
     private final PrintJobRepository printJobRepository;
@@ -799,11 +805,20 @@ public class ThermalPrinterService {
      */
     @Transactional
     public PrintResultDTO printBill(Long billId, String idempotencyKey) {
+        return printBill(billId, idempotencyKey, null);
+    }
+
+    /**
+     * The customer bill. {@code redeemPoints} prints the bill as it will be after that many loyalty points are used: the points
+     * come off the total, the balance to pay is shown, and so are the points the rest will earn. Nothing is redeemed by printing.
+     */
+    @Transactional
+    public PrintResultDTO printBill(Long billId, String idempotencyKey, Integer redeemPoints) {
         // An owner/main manager looking at the whole cafe prints with the settings and printers of the bill's branch.
         if (com.neram.pos.access.OutletContext.current().isEmpty()) {
             Long branch = branchOfBill(billId);
             if (branch != null) {
-                return com.neram.pos.access.OutletContext.callAs(branch, () -> printBill(billId, idempotencyKey));
+                return com.neram.pos.access.OutletContext.callAs(branch, () -> printBill(billId, idempotencyKey, redeemPoints));
             }
         }
         PrinterSetting s = getSettings();
@@ -826,222 +841,10 @@ public class ThermalPrinterService {
         Bill bill = billRepository.findById(billId)
                 .orElseThrow(() -> new IllegalArgumentException("Bill not found with id: " + billId));
 
+        int redeem = validatedRedeem(bill, redeemPoints);
         try {
-            ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-            buffer.write(CMD_INIT);
-
-            // Configure Line Spacing: ESC 3 n (dots)
-            int lineSpacing = (s.getLineSpacing() != null && s.getLineSpacing() > 0) ? s.getLineSpacing() : 24;
-            buffer.write(new byte[]{0x1B, 0x33, (byte) Math.min(255, lineSpacing)});
-
-            // Configure High Contrast / Crisp Thermal Print: ESC G 1 (Double strike)
-            if ("CRISP_DARK".equalsIgnoreCase(s.getPrintStyle()) || s.getPrintStyle() == null) {
-                buffer.write(new byte[]{0x1B, 0x47, 0x01});
-            }
-
-            // Centered Brand Logo at Top (Auto-cropped, pixel-tight)
-            if (s.getLogoEnabled() == null || Boolean.TRUE.equals(s.getLogoEnabled())) {
-                int targetLogoSize = (s.getLogoSize() != null && s.getLogoSize() > 0) ? s.getLogoSize() : 130;
-                byte[] logoBytes = getLogoRasterBytes(s.getPaperWidthMm() != null ? s.getPaperWidthMm() : 80, targetLogoSize);
-                if (logoBytes != null && logoBytes.length > 0) {
-                    buffer.write(CMD_ALIGN_CENTER);
-                    buffer.write(logoBytes);
-                    int gap = (s.getLogoGap() != null && s.getLogoGap() >= 0) ? s.getLogoGap() : 2;
-                    if (gap > 0) {
-                        // ESC J n: Micro-feed n dots without full line feed
-                        buffer.write(new byte[]{0x1B, 0x4A, (byte) Math.min(255, gap * 4)});
-                    }
-                }
-            }
-
-            // Centered Brand Header (Crisp tall typography)
-            buffer.write(CMD_ALIGN_CENTER);
-            if ("DOUBLE_W_H".equalsIgnoreCase(s.getFontSize())) {
-                buffer.write(CMD_TXT_DOUBLE_W_H);
-            } else {
-                buffer.write(CMD_TXT_DOUBLE_H);
-            }
-            buffer.write(CMD_BOLD_ON);
-            buffer.write((s.getHeaderTitle() + "\n").getBytes(StandardCharsets.UTF_8));
-            buffer.write(CMD_TXT_NORMAL);
-            buffer.write(CMD_BOLD_OFF);
-            if (s.getSubheader() != null && !s.getSubheader().isBlank()) {
-                for (String line : s.getSubheader().split("\r?\n")) {
-                    String trimmed = line.trim();
-                    if (!trimmed.isEmpty()) {
-                        buffer.write(formatWordWrapCentered(trimmed, LINE_WIDTH_80MM).getBytes(StandardCharsets.UTF_8));
-                    }
-                }
-            }
-            if (s.getSubheader2() != null && !s.getSubheader2().isBlank()) {
-                for (String line : s.getSubheader2().split("\r?\n")) {
-                    String trimmed = line.trim();
-                    if (!trimmed.isEmpty()) {
-                        buffer.write(formatWordWrapCentered(trimmed, LINE_WIDTH_80MM).getBytes(StandardCharsets.UTF_8));
-                    }
-                }
-            }
-
-            boolean gstActive = Boolean.TRUE.equals(bill.getGstEnabled());
-            String gstin = bill.getGstin();
-            if (gstin == null || gstin.isBlank()) {
-                try {
-                    gstin = gstSettingService.getSettings().getGstin();
-                } catch (Exception ignored) {}
-            }
-
-            if (gstActive) {
-                if (gstin != null && !gstin.isBlank()) {
-                    buffer.write(("GSTIN: " + gstin + "\n").getBytes(StandardCharsets.UTF_8));
-                }
-                buffer.write(CMD_BOLD_ON);
-                buffer.write("TAX INVOICE\n".getBytes(StandardCharsets.UTF_8));
-                buffer.write(CMD_BOLD_OFF);
-            } else {
-                buffer.write(CMD_BOLD_ON);
-                buffer.write("CASH BILL / RECEIPT\n".getBytes(StandardCharsets.UTF_8));
-                buffer.write(CMD_BOLD_OFF);
-            }
-            buffer.write((divider('-') + "\n").getBytes(StandardCharsets.UTF_8));
-
-            // Order Metadata
-            buffer.write(CMD_ALIGN_LEFT);
-            LocalDateTime dt = bill.getCreatedAt() != null ? bill.getCreatedAt() : LocalDateTime.now();
-            String dateStr = dt.format(DATE_TIME_FORMATTER);
-
-            boolean isOutdoor = bill.getOrderType() == Bill.OrderType.OUTDOOR || (bill.getOutdoorToken() != null && !bill.getOutdoorToken().isBlank());
-            boolean isTakeaway = bill.getOrderType() == Bill.OrderType.TAKEAWAY || (bill.getTakeawayToken() != null && !bill.getTakeawayToken().isBlank());
-            if (isOutdoor) {
-                String cust = bill.getCustomerName() != null ? bill.getCustomerName() : "Guest";
-                String tok = bill.getOutdoorToken() != null ? bill.getOutdoorToken() : "OUT";
-                buffer.write(formatTwoColumns("Bill: " + bill.getBillNumber(), "Token: " + tok).getBytes(StandardCharsets.UTF_8));
-                buffer.write(formatTwoColumns("Date: " + dateStr, "Location: OUTDOOR").getBytes(StandardCharsets.UTF_8));
-                buffer.write(("Customer: " + cust + "\n").getBytes(StandardCharsets.UTF_8));
-            } else if (isTakeaway) {
-                String cust = bill.getCustomerName() != null ? bill.getCustomerName() : "Guest";
-                String tok = bill.getTakeawayToken() != null ? bill.getTakeawayToken() : "TAK";
-                buffer.write(formatTwoColumns("Bill: " + bill.getBillNumber(), "Token: " + tok).getBytes(StandardCharsets.UTF_8));
-                buffer.write(formatTwoColumns("Date: " + dateStr, "Type: TAKEAWAY").getBytes(StandardCharsets.UTF_8));
-                buffer.write(("Customer: " + cust + "\n").getBytes(StandardCharsets.UTF_8));
-            } else {
-                String tbl = bill.getTableNumber() != null ? bill.getTableNumber() : "Takeaway";
-                String cust = bill.getCustomerName() != null && !bill.getCustomerName().isBlank() ? " (" + bill.getCustomerName() + ")" : "";
-                buffer.write(formatTwoColumns("Bill: " + bill.getBillNumber(), "Table: " + tbl + cust).getBytes(StandardCharsets.UTF_8));
-                buffer.write(formatTwoColumns("Date: " + dateStr, "Cashier: " + (getUserName(bill.getPrintedBy()) != null ? getUserName(bill.getPrintedBy()) : "Counter")).getBytes(StandardCharsets.UTF_8));
-            }
-
-            String staffName = getUserName(bill.getCreatedBy());
-            buffer.write(("Staff Attended: " + (staffName != null ? staffName : "Staff") + "\n").getBytes(StandardCharsets.UTF_8));
-
-            buffer.write((divider('-') + "\n").getBytes(StandardCharsets.UTF_8));
-
-            // Items Table Header (48 chars width)
-            // ITEM: 25 chars, QTY: 4 chars, PRICE: 8 chars, TOTAL: 11 chars
-            buffer.write(CMD_BOLD_ON);
-            buffer.write(formatItemHeader().getBytes(StandardCharsets.UTF_8));
-            buffer.write(CMD_BOLD_OFF);
-            buffer.write((divider('-') + "\n").getBytes(StandardCharsets.UTF_8));
-
-            // Items List
-            int totalQty = 0;
-            if (bill.getItems() != null) {
-                for (BillItem item : bill.getItems()) {
-                    int q = item.getQuantity() != null ? item.getQuantity() : 0;
-                    totalQty += q;
-                    String itemName = item.getItemName();
-                    if (Boolean.TRUE.equals(item.getIsTakeaway()) && !isTakeaway) {
-                        itemName = itemName + " (Parcel)";
-                    }
-                    buffer.write(formatItemRow(itemName, q, item.getPrice(), item.getSubtotal()).getBytes(StandardCharsets.UTF_8));
-                    printItemSnapshots(buffer, item.getModifiersSnapshot(), item.getComboSnapshot());
-                }
-            }
-
-            buffer.write((divider('-') + "\n").getBytes(StandardCharsets.UTF_8));
-
-            // Summary / Totals
-            buffer.write(formatTwoColumns("Total Qty: " + totalQty, "").getBytes(StandardCharsets.UTF_8));
-            BigDecimal subtotal = bill.getSubtotal() != null ? bill.getSubtotal() : BigDecimal.ZERO;
-            buffer.write(formatTwoColumns("Sub Total:", String.format("Rs. %.2f", subtotal.doubleValue())).getBytes(StandardCharsets.UTF_8));
-
-            if (bill.getDiscountAmount() != null && bill.getDiscountAmount().compareTo(BigDecimal.ZERO) > 0) {
-                String discLabel = String.format("Discount (%.0f%%):", bill.getDiscountPercent() != null ? bill.getDiscountPercent() : 0.0);
-                buffer.write(formatTwoColumns(discLabel, String.format("-Rs. %.2f", bill.getDiscountAmount().doubleValue())).getBytes(StandardCharsets.UTF_8));
-            }
-
-            if (bill.getParcelCharge() != null && bill.getParcelCharge().compareTo(BigDecimal.ZERO) > 0) {
-                buffer.write(formatTwoColumns("Parcel Charge:", String.format("Rs. %.2f", bill.getParcelCharge().doubleValue())).getBytes(StandardCharsets.UTF_8));
-            }
-
-            if (gstActive) {
-                double cgstRate = bill.getCgstPercent() != null ? bill.getCgstPercent() : 2.5;
-                double sgstRate = bill.getSgstPercent() != null ? bill.getSgstPercent() : 2.5;
-                BigDecimal cgstAmt = bill.getCgstAmount() != null ? bill.getCgstAmount() : (bill.getTaxAmount() != null ? bill.getTaxAmount().divide(BigDecimal.valueOf(2), 2, RoundingMode.HALF_UP) : BigDecimal.ZERO);
-                BigDecimal sgstAmt = bill.getSgstAmount() != null ? bill.getSgstAmount() : (bill.getTaxAmount() != null ? bill.getTaxAmount().divide(BigDecimal.valueOf(2), 2, RoundingMode.HALF_UP) : BigDecimal.ZERO);
-
-                buffer.write(formatTwoColumns(String.format("CGST (%.1f%%):", cgstRate), String.format("Rs. %.2f", cgstAmt.doubleValue())).getBytes(StandardCharsets.UTF_8));
-                buffer.write(formatTwoColumns(String.format("SGST (%.1f%%):", sgstRate), String.format("Rs. %.2f", sgstAmt.doubleValue())).getBytes(StandardCharsets.UTF_8));
-
-                if (bill.getRoundOff() != null && bill.getRoundOff().abs().compareTo(new BigDecimal("0.001")) > 0) {
-                    String sign = bill.getRoundOff().compareTo(BigDecimal.ZERO) >= 0 ? "+" : "";
-                    buffer.write(formatTwoColumns("Round off:", String.format("%s%.2f", sign, bill.getRoundOff().doubleValue())).getBytes(StandardCharsets.UTF_8));
-                }
-            }
-
-            if (bill.getPromotionDiscountAmount() != null && bill.getPromotionDiscountAmount().compareTo(BigDecimal.ZERO) > 0) {
-                String promoLabel = String.format("PROMO: %s (%.0f%%):",
-                        bill.getPromotionName() != null ? bill.getPromotionName() : "Promotion",
-                        bill.getPromotionPercentage() != null ? bill.getPromotionPercentage() : 0.0);
-                buffer.write(formatTwoColumns(promoLabel, String.format("-Rs. %.2f", bill.getPromotionDiscountAmount().doubleValue())).getBytes(StandardCharsets.UTF_8));
-            }
-
-            buffer.write((divider('=') + "\n").getBytes(StandardCharsets.UTF_8));
-
-            // Grand Total in Bold Double Height
-            BigDecimal netTotal = bill.getNetAmount() != null ? bill.getNetAmount() : subtotal;
-            buffer.write(CMD_BOLD_ON);
-            buffer.write(CMD_TXT_DOUBLE_H);
-            buffer.write(formatTwoColumns("GRAND TOTAL:", String.format("Rs. %.2f", netTotal.doubleValue())).getBytes(StandardCharsets.UTF_8));
-            buffer.write(CMD_TXT_NORMAL);
-            buffer.write(CMD_BOLD_OFF);
-
-            buffer.write((divider('=') + "\n").getBytes(StandardCharsets.UTF_8));
-            String payMode = (bill.getStatus() == Bill.Status.BILL_PRINTED) ? "PENDING" : (bill.getPaymentMode() != null ? bill.getPaymentMode().name() : "CASH");
-            if (bill.getStatus() != Bill.Status.BILL_PRINTED && bill.getPaymentSummary() != null) {
-                buffer.write(formatTwoColumns("Payment Mode:", "SPLIT").getBytes(StandardCharsets.UTF_8));
-                for (String part : bill.getPaymentSummary().split(" \\+ ")) buffer.write(formatTwoColumns("  " + part.substring(0, part.indexOf(' ')), part.substring(part.indexOf(' ') + 1).replace("₹", "Rs. ")).getBytes(StandardCharsets.UTF_8));
-            } else
-            buffer.write(formatTwoColumns("Payment Mode:", payMode).getBytes(StandardCharsets.UTF_8));
-            buffer.write((divider('-') + "\n").getBytes(StandardCharsets.UTF_8));
-
-            // Payment QR (neram-qr.png): scan to pay by UPI, between the payment mode and the thank-you footer (can be switched off in the printer settings)
-            byte[] payQr = Boolean.FALSE.equals(s.getPaymentQrEnabled()) ? null : getPaymentQrRasterBytes(s.getPaperWidthMm() != null ? s.getPaperWidthMm() : 80);
-            if (payQr != null) {
-                buffer.write(CMD_ALIGN_CENTER);
-                buffer.write(CMD_BOLD_ON);
-                buffer.write("SCAN TO PAY (UPI)\n".getBytes(StandardCharsets.UTF_8));
-                buffer.write(CMD_BOLD_OFF);
-                buffer.write(payQr);
-                buffer.write("\n".getBytes(StandardCharsets.UTF_8));
-            }
-
-            // Footer
-            buffer.write(CMD_ALIGN_CENTER);
-            buffer.write(CMD_BOLD_ON);
-            buffer.write((s.getFooterMessage() + "\n").getBytes(StandardCharsets.UTF_8));
-            buffer.write(CMD_BOLD_OFF);
-            buffer.write("Have a Wonderful Day!\n".getBytes(StandardCharsets.UTF_8));
-
-            int footSpacing = (s.getFooterSpacing() != null && s.getFooterSpacing() >= 0) ? s.getFooterSpacing() : 1;
-            for (int i = 0; i < footSpacing; i++) {
-                buffer.write("\n".getBytes(StandardCharsets.UTF_8));
-            }
-
-            if (Boolean.TRUE.equals(s.getAutoCut())) {
-                buffer.write(CMD_CUT_PAPER);
-            }
-
-            return dispatchPrintJob(billHost, billPort, buffer.toByteArray(), "BILL", bill.getId(), bill.getBillNumber(), idempotencyKey);
+            byte[] receipt = buildBillReceipt(bill, s, new ReceiptExtras(null, null, redeem));
+            return dispatchPrintJob(billHost, billPort, receipt, "BILL", bill.getId(), bill.getBillNumber(), idempotencyKey);
 
         } catch (Exception e) {
             log.error("Failed to print Bill #{} to {}:{}: {}", bill.getBillNumber(), billHost, billPort, e.getMessage());
@@ -1056,6 +859,348 @@ public class ThermalPrinterService {
                     .status("FAILED")
                     .build();
         }
+    }
+
+    /**
+     * Prints one bill per group of items (see {@link BillSplit}). Each printed bill carries "SPLIT BILL n OF m", its own items and
+     * amounts, and the same bill number; the bill itself is not changed. All the bills are sent, or the first problem is reported.
+     */
+    @Transactional
+    public PrintResultDTO printBillSplit(Long billId, com.neram.pos.dto.SplitBillRequestDTO request, String idempotencyKey) {
+        // An owner/main manager looking at the whole cafe prints with the settings and printers of the bill's branch.
+        if (com.neram.pos.access.OutletContext.current().isEmpty()) {
+            Long branch = branchOfBill(billId);
+            if (branch != null) {
+                return com.neram.pos.access.OutletContext.callAs(branch, () -> printBillSplit(billId, request, idempotencyKey));
+            }
+        }
+        PrinterSetting s = getSettings();
+        String billHost = (s.getBillHost() != null && !s.getBillHost().isBlank()) ? s.getBillHost() : s.getHost();
+        int billPort = (s.getBillPort() != null && s.getBillPort() > 0) ? s.getBillPort() : s.getPort();
+        if (!(Boolean.TRUE.equals(s.getBillEnabled()) && Boolean.TRUE.equals(s.getEnabled()))) {
+            return PrintResultDTO.builder().success(false).message("Bill thermal printing is currently disabled.").host(billHost).port(billPort)
+                    .billId(billId).printType("BILL").status("DISABLED").build();
+        }
+        Bill bill = billRepository.findById(billId).orElseThrow(() -> new IllegalArgumentException("Bill not found with id: " + billId));
+        List<BillSplit.Portion> portions = BillSplit.divide(bill, request != null ? request.shares() : null);
+        boolean paid = bill.getStatus() == Bill.Status.PAID;
+        PrintResultDTO last = null;
+        for (BillSplit.Portion portion : portions) {
+            PrintResultDTO result;
+            try {
+                String marker = "SPLIT BILL " + portion.number() + " OF " + portions.size();
+                byte[] bytes = buildBillReceipt(BillSplit.asBill(bill, portion), s, new ReceiptExtras(marker, paid ? "PAID" : "PENDING", 0));
+                result = dispatchPrintJob(billHost, billPort, bytes, "BILL", bill.getId(), bill.getBillNumber(),
+                        idempotencyKey == null || idempotencyKey.isBlank() ? null : idempotencyKey + ":split" + portion.number() + "of" + portions.size());
+            } catch (Exception e) {
+                log.error("Failed to print split bill {} of {} for Bill #{}: {}", portion.number(), portions.size(), bill.getBillNumber(), e.getMessage());
+                return PrintResultDTO.builder().success(false).message("Bill " + portion.number() + " of " + portions.size() + " could not be printed: " + e.getMessage())
+                        .host(billHost).port(billPort).billId(bill.getId()).billNumber(bill.getBillNumber()).printType("BILL").status("FAILED").build();
+            }
+            if (!result.isSuccess()) {
+                result.setMessage("Bill " + portion.number() + " of " + portions.size() + ": " + result.getMessage());
+                return result;
+            }
+            last = result;
+        }
+        if (last != null) last.setMessage(portions.size() + " split bills sent to the printer for Bill #" + bill.getBillNumber());
+        recordAudit("PRINT_SPLIT_BILL", bill, portions);
+        return last;
+    }
+
+    private void recordAudit(String action, Bill bill, List<BillSplit.Portion> portions) {
+        if (auditLogService == null) return;
+        try {
+            StringBuilder parts = new StringBuilder();
+            for (BillSplit.Portion p : portions) parts.append(parts.length() == 0 ? "" : " + ").append(p.netAmount().toPlainString());
+            auditLogService.log(action, "BILL", bill.getId(), null, "Bill " + bill.getBillNumber() + " printed as " + portions.size() + " bills: " + parts);
+        } catch (Exception e) { log.warn("Audit entry for split bill not written: {}", e.getMessage()); }
+    }
+
+    private com.neram.pos.entity.Customer memberOf(Bill bill) {
+        if (bill == null || bill.getCustomerId() == null || customerRepository == null) return null;
+        return customerRepository.findById(bill.getCustomerId()).orElse(null);
+    }
+
+    /** The points to print as used on this bill: none, or a number the member can really use now and the bill can take. */
+    private int validatedRedeem(Bill bill, Integer wanted) {
+        if (wanted == null || wanted <= 0) return 0;
+        com.neram.pos.entity.Customer member = memberOf(bill);
+        if (member == null) throw new IllegalArgumentException("Add the customer's phone number first: only a loyalty member can use points.");
+        int min = loyaltySettings != null ? loyaltySettings.rules().minRedeemPoints() : 100;
+        int usable = CustomerService.spendablePoints(member, com.neram.pos.util.BusinessDate.now());
+        if (wanted < min) throw new IllegalArgumentException("At least " + min + " points are needed to use points.");
+        if (wanted > usable) throw new IllegalArgumentException("The customer can use " + usable + " points now.");
+        BigDecimal net = bill.getNetAmount() != null ? bill.getNetAmount() : BigDecimal.ZERO;
+        if (BigDecimal.valueOf(wanted).compareTo(net) > 0) throw new IllegalArgumentException("The points used cannot be more than the bill total.");
+        return wanted;
+    }
+
+    /**
+     * What a member needs to see on the bill: the points they hold and until when, so they can ask for them to be used; and,
+     * once points are applied, what is left to pay and what the rest will earn. Bills without a member print nothing here.
+     */
+    private void writeLoyaltyBlock(ByteArrayOutputStream buffer, Bill bill, int redeem, BigDecimal net) throws java.io.IOException {
+        com.neram.pos.entity.Customer member = memberOf(bill);
+        if (member == null) return;
+        int usable = CustomerService.spendablePoints(member, com.neram.pos.util.BusinessDate.now());
+        int min = loyaltySettings != null ? loyaltySettings.rules().minRedeemPoints() : 100;
+        buffer.write(CMD_ALIGN_LEFT);
+        buffer.write(CMD_BOLD_ON);
+        buffer.write(("LOYALTY: " + member.getName() + "\n").getBytes(StandardCharsets.UTF_8));
+        buffer.write(CMD_BOLD_OFF);
+        buffer.write(formatTwoColumns("Points balance:", usable + " pts (Rs. " + usable + ")").getBytes(StandardCharsets.UTF_8));
+        if (usable > 0 && member.getPointsExpireAt() != null) {
+            buffer.write(formatTwoColumns("Valid till:", member.getPointsExpireAt().format(java.time.format.DateTimeFormatter.ofPattern("dd-MM-yyyy"))).getBytes(StandardCharsets.UTF_8));
+        }
+        if (redeem > 0) {
+            BigDecimal toPay = net.subtract(BigDecimal.valueOf(redeem)).max(BigDecimal.ZERO);
+            int earned = toPay.divide(BigDecimal.valueOf(LoyaltySettingsService.RUPEES_PER_POINT_EARNED), 0, RoundingMode.DOWN).intValue();
+            buffer.write(formatTwoColumns("Points after this bill:", (usable - redeem + earned) + " pts").getBytes(StandardCharsets.UTF_8));
+            buffer.write(formatTwoColumns("Points earned on Rs. " + toPay.setScale(0, RoundingMode.DOWN).toPlainString() + ":", "+" + earned + " pts").getBytes(StandardCharsets.UTF_8));
+        } else if (bill.getStatus() == Bill.Status.BILL_PRINTED && usable >= min) {
+            buffer.write(formatWordWrapCentered("Ask the cashier to use your points on this bill (1 point = Rs. 1).", LINE_WIDTH_80MM).getBytes(StandardCharsets.UTF_8));
+        }
+        buffer.write((divider('-') + "\n").getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** What is different about a bill that is not the plain customer bill: a split marker, its own payment line, points about to be used. */
+    record ReceiptExtras(String splitMarker, String paymentText, int redeemPoints) {}
+
+    private byte[] buildBillReceipt(Bill bill, PrinterSetting s, ReceiptExtras extras) throws java.io.IOException {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        buffer.write(CMD_INIT);
+
+        // Configure Line Spacing: ESC 3 n (dots)
+        int lineSpacing = (s.getLineSpacing() != null && s.getLineSpacing() > 0) ? s.getLineSpacing() : 24;
+        buffer.write(new byte[]{0x1B, 0x33, (byte) Math.min(255, lineSpacing)});
+
+        // Configure High Contrast / Crisp Thermal Print: ESC G 1 (Double strike)
+        if ("CRISP_DARK".equalsIgnoreCase(s.getPrintStyle()) || s.getPrintStyle() == null) {
+            buffer.write(new byte[]{0x1B, 0x47, 0x01});
+        }
+
+        // Centered Brand Logo at Top (Auto-cropped, pixel-tight)
+        if (s.getLogoEnabled() == null || Boolean.TRUE.equals(s.getLogoEnabled())) {
+            int targetLogoSize = (s.getLogoSize() != null && s.getLogoSize() > 0) ? s.getLogoSize() : 130;
+            byte[] logoBytes = getLogoRasterBytes(s.getPaperWidthMm() != null ? s.getPaperWidthMm() : 80, targetLogoSize);
+            if (logoBytes != null && logoBytes.length > 0) {
+                buffer.write(CMD_ALIGN_CENTER);
+                buffer.write(logoBytes);
+                int gap = (s.getLogoGap() != null && s.getLogoGap() >= 0) ? s.getLogoGap() : 2;
+                if (gap > 0) {
+                    // ESC J n: Micro-feed n dots without full line feed
+                    buffer.write(new byte[]{0x1B, 0x4A, (byte) Math.min(255, gap * 4)});
+                }
+            }
+        }
+
+        // Centered Brand Header (Crisp tall typography)
+        buffer.write(CMD_ALIGN_CENTER);
+        if ("DOUBLE_W_H".equalsIgnoreCase(s.getFontSize())) {
+            buffer.write(CMD_TXT_DOUBLE_W_H);
+        } else {
+            buffer.write(CMD_TXT_DOUBLE_H);
+        }
+        buffer.write(CMD_BOLD_ON);
+        buffer.write((s.getHeaderTitle() + "\n").getBytes(StandardCharsets.UTF_8));
+        buffer.write(CMD_TXT_NORMAL);
+        buffer.write(CMD_BOLD_OFF);
+        if (s.getSubheader() != null && !s.getSubheader().isBlank()) {
+            for (String line : s.getSubheader().split("\r?\n")) {
+                String trimmed = line.trim();
+                if (!trimmed.isEmpty()) {
+                    buffer.write(formatWordWrapCentered(trimmed, LINE_WIDTH_80MM).getBytes(StandardCharsets.UTF_8));
+                }
+            }
+        }
+        if (s.getSubheader2() != null && !s.getSubheader2().isBlank()) {
+            for (String line : s.getSubheader2().split("\r?\n")) {
+                String trimmed = line.trim();
+                if (!trimmed.isEmpty()) {
+                    buffer.write(formatWordWrapCentered(trimmed, LINE_WIDTH_80MM).getBytes(StandardCharsets.UTF_8));
+                }
+            }
+        }
+
+        boolean gstActive = Boolean.TRUE.equals(bill.getGstEnabled());
+        String gstin = bill.getGstin();
+        if (gstin == null || gstin.isBlank()) {
+            try {
+                gstin = gstSettingService.getSettings().getGstin();
+            } catch (Exception ignored) {}
+        }
+
+        if (gstActive) {
+            if (gstin != null && !gstin.isBlank()) {
+                buffer.write(("GSTIN: " + gstin + "\n").getBytes(StandardCharsets.UTF_8));
+            }
+            buffer.write(CMD_BOLD_ON);
+            buffer.write("TAX INVOICE\n".getBytes(StandardCharsets.UTF_8));
+            buffer.write(CMD_BOLD_OFF);
+        } else {
+            buffer.write(CMD_BOLD_ON);
+            buffer.write("CASH BILL / RECEIPT\n".getBytes(StandardCharsets.UTF_8));
+            buffer.write(CMD_BOLD_OFF);
+        }
+        if (extras.splitMarker() != null) {
+            buffer.write(CMD_BOLD_ON);
+            buffer.write((extras.splitMarker() + "\n").getBytes(StandardCharsets.UTF_8));
+            buffer.write(CMD_BOLD_OFF);
+        }
+        buffer.write((divider('-') + "\n").getBytes(StandardCharsets.UTF_8));
+
+        // Order Metadata
+        buffer.write(CMD_ALIGN_LEFT);
+        LocalDateTime dt = bill.getCreatedAt() != null ? bill.getCreatedAt() : LocalDateTime.now();
+        String dateStr = dt.format(DATE_TIME_FORMATTER);
+
+        boolean isOutdoor = bill.getOrderType() == Bill.OrderType.OUTDOOR || (bill.getOutdoorToken() != null && !bill.getOutdoorToken().isBlank());
+        boolean isTakeaway = bill.getOrderType() == Bill.OrderType.TAKEAWAY || (bill.getTakeawayToken() != null && !bill.getTakeawayToken().isBlank());
+        if (isOutdoor) {
+            String cust = bill.getCustomerName() != null ? bill.getCustomerName() : "Guest";
+            String tok = bill.getOutdoorToken() != null ? bill.getOutdoorToken() : "OUT";
+            buffer.write(formatTwoColumns("Bill: " + bill.getBillNumber(), "Token: " + tok).getBytes(StandardCharsets.UTF_8));
+            buffer.write(formatTwoColumns("Date: " + dateStr, "Location: OUTDOOR").getBytes(StandardCharsets.UTF_8));
+            buffer.write(("Customer: " + cust + "\n").getBytes(StandardCharsets.UTF_8));
+        } else if (isTakeaway) {
+            String cust = bill.getCustomerName() != null ? bill.getCustomerName() : "Guest";
+            String tok = bill.getTakeawayToken() != null ? bill.getTakeawayToken() : "TAK";
+            buffer.write(formatTwoColumns("Bill: " + bill.getBillNumber(), "Token: " + tok).getBytes(StandardCharsets.UTF_8));
+            buffer.write(formatTwoColumns("Date: " + dateStr, "Type: TAKEAWAY").getBytes(StandardCharsets.UTF_8));
+            buffer.write(("Customer: " + cust + "\n").getBytes(StandardCharsets.UTF_8));
+        } else {
+            String tbl = bill.getTableNumber() != null ? bill.getTableNumber() : "Takeaway";
+            String cust = bill.getCustomerName() != null && !bill.getCustomerName().isBlank() ? " (" + bill.getCustomerName() + ")" : "";
+            buffer.write(formatTwoColumns("Bill: " + bill.getBillNumber(), "Table: " + tbl + cust).getBytes(StandardCharsets.UTF_8));
+            buffer.write(formatTwoColumns("Date: " + dateStr, "Cashier: " + (getUserName(bill.getPrintedBy()) != null ? getUserName(bill.getPrintedBy()) : "Counter")).getBytes(StandardCharsets.UTF_8));
+        }
+
+        String staffName = getUserName(bill.getCreatedBy());
+        buffer.write(("Staff Attended: " + (staffName != null ? staffName : "Staff") + "\n").getBytes(StandardCharsets.UTF_8));
+
+        buffer.write((divider('-') + "\n").getBytes(StandardCharsets.UTF_8));
+
+        // Items Table Header (48 chars width)
+        // ITEM: 25 chars, QTY: 4 chars, PRICE: 8 chars, TOTAL: 11 chars
+        buffer.write(CMD_BOLD_ON);
+        buffer.write(formatItemHeader().getBytes(StandardCharsets.UTF_8));
+        buffer.write(CMD_BOLD_OFF);
+        buffer.write((divider('-') + "\n").getBytes(StandardCharsets.UTF_8));
+
+        // Items List
+        int totalQty = 0;
+        if (bill.getItems() != null) {
+            for (BillItem item : bill.getItems()) {
+                int q = item.getQuantity() != null ? item.getQuantity() : 0;
+                totalQty += q;
+                String itemName = item.getItemName();
+                if (Boolean.TRUE.equals(item.getIsTakeaway()) && !isTakeaway) {
+                    itemName = itemName + " (Parcel)";
+                }
+                buffer.write(formatItemRow(itemName, q, item.getPrice(), item.getSubtotal()).getBytes(StandardCharsets.UTF_8));
+                printItemSnapshots(buffer, item.getModifiersSnapshot(), item.getComboSnapshot());
+            }
+        }
+
+        buffer.write((divider('-') + "\n").getBytes(StandardCharsets.UTF_8));
+
+        // Summary / Totals
+        buffer.write(formatTwoColumns("Total Qty: " + totalQty, "").getBytes(StandardCharsets.UTF_8));
+        BigDecimal subtotal = bill.getSubtotal() != null ? bill.getSubtotal() : BigDecimal.ZERO;
+        buffer.write(formatTwoColumns("Sub Total:", String.format("Rs. %.2f", subtotal.doubleValue())).getBytes(StandardCharsets.UTF_8));
+
+        if (bill.getDiscountAmount() != null && bill.getDiscountAmount().compareTo(BigDecimal.ZERO) > 0) {
+            String discLabel = String.format("Discount (%.0f%%):", bill.getDiscountPercent() != null ? bill.getDiscountPercent() : 0.0);
+            buffer.write(formatTwoColumns(discLabel, String.format("-Rs. %.2f", bill.getDiscountAmount().doubleValue())).getBytes(StandardCharsets.UTF_8));
+        }
+
+        if (bill.getParcelCharge() != null && bill.getParcelCharge().compareTo(BigDecimal.ZERO) > 0) {
+            buffer.write(formatTwoColumns("Parcel Charge:", String.format("Rs. %.2f", bill.getParcelCharge().doubleValue())).getBytes(StandardCharsets.UTF_8));
+        }
+
+        if (gstActive) {
+            double cgstRate = bill.getCgstPercent() != null ? bill.getCgstPercent() : 2.5;
+            double sgstRate = bill.getSgstPercent() != null ? bill.getSgstPercent() : 2.5;
+            BigDecimal cgstAmt = bill.getCgstAmount() != null ? bill.getCgstAmount() : (bill.getTaxAmount() != null ? bill.getTaxAmount().divide(BigDecimal.valueOf(2), 2, RoundingMode.HALF_UP) : BigDecimal.ZERO);
+            BigDecimal sgstAmt = bill.getSgstAmount() != null ? bill.getSgstAmount() : (bill.getTaxAmount() != null ? bill.getTaxAmount().divide(BigDecimal.valueOf(2), 2, RoundingMode.HALF_UP) : BigDecimal.ZERO);
+
+            buffer.write(formatTwoColumns(String.format("CGST (%.1f%%):", cgstRate), String.format("Rs. %.2f", cgstAmt.doubleValue())).getBytes(StandardCharsets.UTF_8));
+            buffer.write(formatTwoColumns(String.format("SGST (%.1f%%):", sgstRate), String.format("Rs. %.2f", sgstAmt.doubleValue())).getBytes(StandardCharsets.UTF_8));
+
+            if (bill.getRoundOff() != null && bill.getRoundOff().abs().compareTo(new BigDecimal("0.001")) > 0) {
+                String sign = bill.getRoundOff().compareTo(BigDecimal.ZERO) >= 0 ? "+" : "";
+                buffer.write(formatTwoColumns("Round off:", String.format("%s%.2f", sign, bill.getRoundOff().doubleValue())).getBytes(StandardCharsets.UTF_8));
+            }
+        }
+
+        if (bill.getPromotionDiscountAmount() != null && bill.getPromotionDiscountAmount().compareTo(BigDecimal.ZERO) > 0) {
+            String promoLabel = String.format("PROMO: %s (%.0f%%):",
+                    bill.getPromotionName() != null ? bill.getPromotionName() : "Promotion",
+                    bill.getPromotionPercentage() != null ? bill.getPromotionPercentage() : 0.0);
+            buffer.write(formatTwoColumns(promoLabel, String.format("-Rs. %.2f", bill.getPromotionDiscountAmount().doubleValue())).getBytes(StandardCharsets.UTF_8));
+        }
+
+        buffer.write((divider('=') + "\n").getBytes(StandardCharsets.UTF_8));
+
+        // Grand Total in Bold Double Height
+        BigDecimal netTotal = bill.getNetAmount() != null ? bill.getNetAmount() : subtotal;
+        buffer.write(CMD_BOLD_ON);
+        buffer.write(CMD_TXT_DOUBLE_H);
+        buffer.write(formatTwoColumns("GRAND TOTAL:", String.format("Rs. %.2f", netTotal.doubleValue())).getBytes(StandardCharsets.UTF_8));
+        buffer.write(CMD_TXT_NORMAL);
+        buffer.write(CMD_BOLD_OFF);
+
+        int redeem = extras.redeemPoints();
+        if (redeem > 0) {
+            BigDecimal toPay = netTotal.subtract(BigDecimal.valueOf(redeem)).max(BigDecimal.ZERO);
+            buffer.write(formatTwoColumns("Loyalty points used (" + redeem + " pts):", String.format("-Rs. %.2f", (double) redeem)).getBytes(StandardCharsets.UTF_8));
+            buffer.write(CMD_BOLD_ON);
+            buffer.write(CMD_TXT_DOUBLE_H);
+            buffer.write(formatTwoColumns("BALANCE TO PAY:", String.format("Rs. %.2f", toPay.doubleValue())).getBytes(StandardCharsets.UTF_8));
+            buffer.write(CMD_TXT_NORMAL);
+            buffer.write(CMD_BOLD_OFF);
+        }
+
+        buffer.write((divider('=') + "\n").getBytes(StandardCharsets.UTF_8));
+        String payMode = (bill.getStatus() == Bill.Status.BILL_PRINTED) ? "PENDING" : (bill.getPaymentMode() != null ? bill.getPaymentMode().name() : "CASH");
+        if (extras.paymentText() == null && bill.getStatus() != Bill.Status.BILL_PRINTED && bill.getPaymentSummary() != null) {
+            buffer.write(formatTwoColumns("Payment Mode:", "SPLIT").getBytes(StandardCharsets.UTF_8));
+            for (String part : bill.getPaymentSummary().split(" \\+ ")) buffer.write(formatTwoColumns("  " + part.substring(0, part.indexOf(' ')), part.substring(part.indexOf(' ') + 1).replace("₹", "Rs. ")).getBytes(StandardCharsets.UTF_8));
+        } else
+        buffer.write(formatTwoColumns("Payment Mode:", extras.paymentText() != null ? extras.paymentText() : payMode).getBytes(StandardCharsets.UTF_8));
+        buffer.write((divider('-') + "\n").getBytes(StandardCharsets.UTF_8));
+        writeLoyaltyBlock(buffer, bill, redeem, netTotal);
+
+        // Payment QR (neram-qr.png): scan to pay by UPI, between the payment mode and the thank-you footer (can be switched off in the printer settings)
+        byte[] payQr = Boolean.FALSE.equals(s.getPaymentQrEnabled()) ? null : getPaymentQrRasterBytes(s.getPaperWidthMm() != null ? s.getPaperWidthMm() : 80);
+        if (payQr != null) {
+            buffer.write(CMD_ALIGN_CENTER);
+            buffer.write(CMD_BOLD_ON);
+            buffer.write("SCAN TO PAY (UPI)\n".getBytes(StandardCharsets.UTF_8));
+            buffer.write(CMD_BOLD_OFF);
+            buffer.write(payQr);
+            buffer.write("\n".getBytes(StandardCharsets.UTF_8));
+        }
+
+        // Footer
+        buffer.write(CMD_ALIGN_CENTER);
+        buffer.write(CMD_BOLD_ON);
+        buffer.write((s.getFooterMessage() + "\n").getBytes(StandardCharsets.UTF_8));
+        buffer.write(CMD_BOLD_OFF);
+        buffer.write("Have a Wonderful Day!\n".getBytes(StandardCharsets.UTF_8));
+
+        int footSpacing = (s.getFooterSpacing() != null && s.getFooterSpacing() >= 0) ? s.getFooterSpacing() : 1;
+        for (int i = 0; i < footSpacing; i++) {
+            buffer.write("\n".getBytes(StandardCharsets.UTF_8));
+        }
+
+        if (Boolean.TRUE.equals(s.getAutoCut())) {
+            buffer.write(CMD_CUT_PAPER);
+        }
+
+
+        return buffer.toByteArray();
     }
 
     public PrintResultDTO printKot(Long billId) {

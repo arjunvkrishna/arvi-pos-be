@@ -27,16 +27,10 @@ public class AccountingController {
         return ResponseEntity.ok(accountingService.getProfitAndLoss(startDate, endDate));
     }
 
-    /** Cash, stock, supplier payables and gift-card liability are cafe-level facts: owner and main manager only. */
+    /** Cash, stock and supplier payables are cafe-level facts: owner and main manager only. */
     @GetMapping("/balance-sheet")
     @PreAuthorize("hasAuthority('PERM_MANAGE_SETTINGS')")
     public ResponseEntity<BalanceSheetReport> getBalanceSheet() {
         return ResponseEntity.ok(accountingService.getBalanceSheet());
-    }
-
-    @GetMapping("/gift-card-liability")
-    @PreAuthorize("hasAuthority('PERM_MANAGE_SETTINGS')")
-    public ResponseEntity<GiftCardLiabilitySummary> getGiftCardLiability() {
-        return ResponseEntity.ok(accountingService.getGiftCardLiability());
     }
 }

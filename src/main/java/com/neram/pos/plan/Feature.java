@@ -7,7 +7,7 @@ package com.neram.pos.plan;
 public enum Feature {
     STOCK_CONTROL(Plan.PRO, "Stock counts, expiry and reorder lists"),
     SUPPLIERS_EXPENSES(Plan.PRO, "Suppliers, expenses and budgets"),
-    CRM(Plan.PRO, "Customers, loyalty, gift cards and coupons"),
+    CRM(Plan.PRO, "Customers and loyalty points"),
     STAFF_PAYROLL(Plan.PRO, "Staff records, attendance, leave and payroll"),
     TELEGRAM(Plan.PRO, "Telegram alerts and daily reports"),
     EXPORTS(Plan.PRO, "Report exports"),

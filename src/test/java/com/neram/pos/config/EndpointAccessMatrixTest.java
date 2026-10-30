@@ -54,9 +54,9 @@ class EndpointAccessMatrixTest {
             "AuthController#login", "AuthController#refresh", "AuthController#logout", "AuthController#health",
             // own account
             "UserController#getMyProfile", "UserController#updateMyProfile", "UserController#changeOwnPassword",
-            // public: the cafe is named in the URL and each is token or rate-limit protected
+            // public: the cafe is named in the URL and each is token protected
             "PublicMenuController#getPublicMenu", "PublicMenuController#getPublicMenuStatus", "PublicMenuController#getLogo",
-            "GiftCardController#getBalance", "CustomerController#unsubscribe",
+            "CustomerController#unsubscribe",
             "PublicCampaignController#unsubscribeGet", "PublicCampaignController#unsubscribePost",
             "TelegramWebhookController#handleTelegramWebhook",
             // the print bridge signs in with its cafe's own token, not a user
@@ -88,10 +88,9 @@ class EndpointAccessMatrixTest {
             "TelegramAdminController#getDeliveryHistory",
             "CampaignController#createCampaign", "CampaignController#updateCampaign",
             "CampaignController#deleteCampaign", "CampaignController#sendCampaign",
-            "CouponController#createCoupon", "CouponController#updateCoupon", "CouponController#deleteCoupon",
             "BankReconciliationController#getAllStatements", "BankReconciliationController#importStatementFile",
             "BankReconciliationController#matchRow", "BankReconciliationController#autoMatch",
-            "AccountingController#getBalanceSheet", "AccountingController#getGiftCardLiability",
+            "AccountingController#getBalanceSheet",
             "DocumentController#createCategory", "DocumentController#deleteCategory",
             "OutletController#createOutlet", "OutletController#getFranchiseAnalytics");
 
@@ -109,9 +108,8 @@ class EndpointAccessMatrixTest {
             // the cafe logo and payment QR shown in the header and on bills (editing them needs a settings right)
             "BrandingController#overview", "BrandingController#get");
 
-    /** Extra things one kind of staff does by their job: the cashier sells gift cards at the till, the kitchen reads its tickets. */
+    /** Extra things one kind of staff does by their job: the kitchen reads its tickets. */
     private static final Map<Role, Set<String>> ROLE_SPECIFIC = Map.of(
-            Role.CASHIER, Set.of("GiftCardController#issueCard"),
             Role.KITCHEN, Set.of("KitchenController#tickets", "BillController#streamOrderChanges"));
 
     // ---- the people --------------------------------------------------------------------------------------------
@@ -302,7 +300,7 @@ class EndpointAccessMatrixTest {
             u.setCanTakeOrders(true); u.setCanPrintBill(true); u.setCanManageInventory(true); u.setCanCancelOrder(true);
         }));
         // the controllers whose screens are for managers only: no staff permission may open any of them
-        Set<String> managerOnly = Set.of("CustomerController", "CouponController", "DocumentController", "ShiftScheduleController",
+        Set<String> managerOnly = Set.of("CustomerController", "DocumentController", "ShiftScheduleController",
                 "TipPoolController", "SalaryController", "EmployeeController", "UserController", "SupplierController",
                 "AccountingController", "BankReconciliationController", "CampaignController", "ReportExportController",
                 "AnalyticsController", "MoneyReportsController", "OwnerDashboardController", "ExpenseController",

@@ -423,27 +423,16 @@ public class CashierShiftService {
     public BigDecimal calculateExpectedCash(CashierShift shift) {
         BigDecimal opening = shift.getOpeningFloat() != null ? shift.getOpeningFloat() : BigDecimal.ZERO;
         BigDecimal sales = shift.getCashSales() != null ? shift.getCashSales() : BigDecimal.ZERO;
-        BigDecimal gcCash = shift.getGiftCardCashSales() != null ? shift.getGiftCardCashSales() : BigDecimal.ZERO;
         BigDecimal in = shift.getCashInTotal() != null ? shift.getCashInTotal() : BigDecimal.ZERO;
         BigDecimal refunds = shift.getCashRefunds() != null ? shift.getCashRefunds() : BigDecimal.ZERO;
         BigDecimal out = shift.getCashOutTotal() != null ? shift.getCashOutTotal() : BigDecimal.ZERO;
         BigDecimal transfersOut = shift.getTransfersOutTotal() != null ? shift.getTransfersOutTotal() : BigDecimal.ZERO;
         BigDecimal transfersIn = shift.getTransfersInTotal() != null ? shift.getTransfersInTotal() : BigDecimal.ZERO;
 
-        return opening.add(sales).add(gcCash).add(in)
+        return opening.add(sales).add(in)
                 .subtract(refunds).subtract(out)
                 .subtract(transfersOut).add(transfersIn)
                 .setScale(2, RoundingMode.HALF_UP);
-    }
-
-    @Transactional
-    public void recordGiftCardCashSale(BigDecimal amount) {
-        if (amount == null || amount.signum() <= 0) return;
-        getActiveShift().ifPresent(shift -> {
-            BigDecimal current = shift.getGiftCardCashSales() != null ? shift.getGiftCardCashSales() : BigDecimal.ZERO;
-            shift.setGiftCardCashSales(current.add(amount));
-            shiftRepository.save(shift);
-        });
     }
 
     @Transactional

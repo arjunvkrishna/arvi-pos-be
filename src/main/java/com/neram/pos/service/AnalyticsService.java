@@ -625,7 +625,7 @@ public class AnalyticsService {
                                 .tableNumber(b.getTableNumber())
                                 .customerName(b.getCustomerName())
                                 .netAmount(b.getNetAmount() != null ? b.getNetAmount().doubleValue() : 0.0)
-                                .paymentMode(b.getPaymentMode() != null ? b.getPaymentMode().name() : "CASH")
+                                .paymentMode(b.getPaymentSummary() != null ? b.getPaymentSummary() : (b.getPaymentMode() != null ? b.getPaymentMode().name() : "CASH"))
                                 .createdAt(b.getCreatedAt() != null ? b.getCreatedAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")) : "")
                                 .build());
             case "expenses":

@@ -280,6 +280,13 @@ public class BillController {
         return ResponseEntity.ok(billService.printBill(id, request));
     }
 
+    /** The separate bills a split by items would print, with each bill's amounts; nothing is saved or printed. */
+    @PostMapping("/{id}/split-preview")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER') or hasAuthority('PERM_PRINT_BILL')")
+    public ResponseEntity<com.neram.pos.dto.SplitBillPreviewDTO> previewSplit(@PathVariable Long id, @RequestBody com.neram.pos.dto.SplitBillRequestDTO request) {
+        return ResponseEntity.ok(billService.previewSplit(id, request));
+    }
+
     @PostMapping("/{id}/confirm-payment")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
     public ResponseEntity<BillResponseDTO> confirmPayment(@PathVariable Long id, @RequestBody(required = false) BillRequestDTO request) {

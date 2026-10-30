@@ -69,17 +69,7 @@ public class AccountingDTO {
     @Builder
     public static class Liabilities {
         private BigDecimal unpaidSupplierInvoices;
-        private BigDecimal giftCardLiability;
         private BigDecimal unpaidTips;
         private BigDecimal totalLiabilities;
-    }
-
-    @Data
-    @NoArgsConstructor
-    @AllArgsConstructor
-    @Builder
-    public static class GiftCardLiabilitySummary {
-        private BigDecimal activeGiftCardBalance;
-        private long activeCardCount;
     }
 }

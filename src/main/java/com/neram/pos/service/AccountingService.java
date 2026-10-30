@@ -26,7 +26,6 @@ public class AccountingService {
     private final SalaryRepository salaryRepository;
     private final SupplierInvoiceRepository supplierInvoiceRepository;
     private final InventoryItemRepository inventoryItemRepository;
-    private final GiftCardRepository giftCardRepository;
     private final TipPoolEmployeeShareRepository tipPoolEmployeeShareRepository;
     private final CashierShiftRepository cashierShiftRepository;
 
@@ -131,7 +130,6 @@ public class AccountingService {
         for (CashierShift shift : openShifts) {
             BigDecimal drawerCash = shift.getOpeningFloat() != null ? shift.getOpeningFloat() : BigDecimal.ZERO;
             if (shift.getCashSales() != null) drawerCash = drawerCash.add(shift.getCashSales());
-            if (shift.getGiftCardCashSales() != null) drawerCash = drawerCash.add(shift.getGiftCardCashSales());
             if (shift.getCashOutTotal() != null) drawerCash = drawerCash.subtract(shift.getCashOutTotal());
             if (shift.getCashRefunds() != null) drawerCash = drawerCash.subtract(shift.getCashRefunds());
             cashInDrawers = cashInDrawers.add(drawerCash);
@@ -143,13 +141,10 @@ public class AccountingService {
         BigDecimal unpaidSuppliers = supplierInvoiceRepository.totalOutstandingAll();
         if (unpaidSuppliers == null) unpaidSuppliers = BigDecimal.ZERO;
 
-        BigDecimal giftCardLiability = giftCardRepository.sumActiveBalances();
-        if (giftCardLiability == null) giftCardLiability = BigDecimal.ZERO;
-
         BigDecimal unpaidTips = tipPoolEmployeeShareRepository.sumUnpaidTips();
         if (unpaidTips == null) unpaidTips = BigDecimal.ZERO;
 
-        BigDecimal totalLiabilities = unpaidSuppliers.add(giftCardLiability).add(unpaidTips);
+        BigDecimal totalLiabilities = unpaidSuppliers.add(unpaidTips);
 
         // 4. Net Worth / Equity
         BigDecimal netWorth = totalAssets.subtract(totalLiabilities);
@@ -163,23 +158,10 @@ public class AccountingService {
                         .build())
                 .liabilities(Liabilities.builder()
                         .unpaidSupplierInvoices(unpaidSuppliers.setScale(2, RoundingMode.HALF_UP))
-                        .giftCardLiability(giftCardLiability.setScale(2, RoundingMode.HALF_UP))
                         .unpaidTips(unpaidTips.setScale(2, RoundingMode.HALF_UP))
                         .totalLiabilities(totalLiabilities.setScale(2, RoundingMode.HALF_UP))
                         .build())
                 .netWorthOrEquity(netWorth.setScale(2, RoundingMode.HALF_UP))
-                .build();
-    }
-
-    public GiftCardLiabilitySummary getGiftCardLiability() {
-        BigDecimal balance = giftCardRepository.sumActiveBalances();
-        if (balance == null) balance = BigDecimal.ZERO;
-        long count = giftCardRepository.findAll().stream()
-                .filter(g -> g.getStatus() == GiftCard.Status.ACTIVE)
-                .count();
-        return GiftCardLiabilitySummary.builder()
-                .activeGiftCardBalance(balance.setScale(2, RoundingMode.HALF_UP))
-                .activeCardCount(count)
                 .build();
     }
 }

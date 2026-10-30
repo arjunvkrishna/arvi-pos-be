@@ -28,7 +28,7 @@ public final class SplitPayments {
             BillRequestDTO.PaymentPart p = in.get(i);
             Bill.PaymentMode mode;
             try { mode = Bill.PaymentMode.valueOf(p.getMode() == null ? "" : p.getMode().trim().toUpperCase()); }
-            catch (IllegalArgumentException e) { throw new IllegalArgumentException("Payment " + (i + 1) + " has an unknown mode. Use CASH, UPI, CARD, GIFT_CARD or LOYALTY_POINTS."); }
+            catch (IllegalArgumentException e) { throw new IllegalArgumentException("Payment " + (i + 1) + " has an unknown mode. Use CASH, UPI, CARD or LOYALTY_POINTS."); }
             if (p.getAmount() == null || p.getAmount().signum() <= 0) throw new IllegalArgumentException("Payment " + (i + 1) + " must be more than zero.");
             BigDecimal amount = p.getAmount().setScale(2, RoundingMode.HALF_UP);
             String ref = p.getReference() == null || p.getReference().isBlank() ? null : p.getReference().trim().substring(0, Math.min(100, p.getReference().trim().length()));

@@ -98,9 +98,27 @@ public class PrinterController {
             @RequestHeader(value = "X-Idempotency-Key", required = false) String xIdempotencyKeyHeader,
             @RequestHeader(value = ROUTE_HEADER, required = false) String route,
             @RequestHeader(value = DEVICE_HEADER, required = false) String phoneId,
+            @RequestParam(value = "redeemPoints", required = false) Integer redeemPoints,
             Authentication auth) {
         String key = idempotencyKeyHeader != null ? idempotencyKeyHeader : xIdempotencyKeyHeader;
-        return routed(route, phoneId, auth, () -> thermalPrinterService.printBill(billId, key));
+        return routed(route, phoneId, auth, () -> thermalPrinterService.printBill(billId, key, redeemPoints));
+    }
+
+    /**
+     * Prints a printed or paid bill as separate bills, one per group of items in the body. The bill itself is not changed.
+     */
+    @PostMapping("/print-bill-split/{billId}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER') or hasAuthority('PERM_PRINT_BILL')")
+    public ResponseEntity<PrintResultDTO> printBillSplit(
+            @PathVariable Long billId,
+            @RequestBody com.neram.pos.dto.SplitBillRequestDTO request,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKeyHeader,
+            @RequestHeader(value = "X-Idempotency-Key", required = false) String xIdempotencyKeyHeader,
+            @RequestHeader(value = ROUTE_HEADER, required = false) String route,
+            @RequestHeader(value = DEVICE_HEADER, required = false) String phoneId,
+            Authentication auth) {
+        String key = idempotencyKeyHeader != null ? idempotencyKeyHeader : xIdempotencyKeyHeader;
+        return routed(route, phoneId, auth, () -> thermalPrinterService.printBillSplit(billId, request, key));
     }
 
     @PostMapping("/print-kot/{billId}")

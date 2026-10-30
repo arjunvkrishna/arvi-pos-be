@@ -11,6 +11,8 @@ public class TableOrderRequestDTO {
     private String tableNumber;
     private String customerName;
     private Long customerId;
+    /** the loyalty number the customer gave when ordering; blank removes it, absent leaves the order as it was */
+    private String customerPhone;
     private String outdoorToken;
     private String takeawayToken;
     private BigDecimal parcelCharge;
